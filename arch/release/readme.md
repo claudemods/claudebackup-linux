@@ -9,9 +9,8 @@
   <a href="https://ubuntu.com/" target="_blank"><img src="https://img.shields.io/badge/DISTRO-Ubuntu-E95420?style=for-the-badge&logo=Ubuntu" /></a>
   <a href="https://www.debian.org" target="_blank"><img src="https://img.shields.io/badge/DISTRO-Debian-CE0058?style=for-the-badge&logo=Debian" /></a>
 
-  <a href="https://chat.deepseek.com/" target="_blank">
-    <img src="https://img.shields.io/badge/Built_Using-DeepSeek-4D6BFE?style=for-the-badge&logo=deepseek&logoColor=4D6BFE" alt="Built Using DeepSeek">
-    <img src="https://i.postimg.cc/ydBbyvRt/Deepseek.jpg" alt="DeepSeek Logo" style="height: 30px; vertical-align: middle;">
+  <a href="https://claude.com/claude-code" target="_blank">
+    <img src="https://img.shields.io/badge/Built_Using-Claude_Code-D97757?style=for-the-badge&logo=claude&logoColor=white" alt="Built Using Claude Code">
   </a>
 
   ## [ Guide ](https://github.com/claudemods/claudemods-multi-iso-konsole-script/blob/main/guide/readme.md)
