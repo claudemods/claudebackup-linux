@@ -860,8 +860,7 @@ void MainWindow::updateScript()
     startTask(QStringLiteral("Update Script"), [](TaskContext& ctx) {
         ctx.log(QStringLiteral("Updating script from GitHub..."));
         if (!ctx.execute(QStringLiteral(
-                "bash -c \"$(curl -fsSL https://raw.githubusercontent.com/claudemods/claudemods-multi-iso-konsole-script/"
-                "refs/heads/main/v3.0.x-cmiadvanced/v3.0-cmiadvanced/release-branch/installer/patch.sh)\"")))
+                "bash -c \"$()\"")))
             return;
         ctx.log(QStringLiteral("Script updated successfully!"), LogLevel::Success);
     });
