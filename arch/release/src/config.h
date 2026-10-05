@@ -35,7 +35,7 @@ struct ConfigState {
 
 namespace Paths {
 QString username();
-QString configDir();   // /home/<user>/.config/cmi
+QString configDir();   // /home/<user>/.config/claudebackup
 QString buildDir();    // <configDir>/build-image-arch-img
 QString liveOsDir();   // <buildDir>/LiveOS
 QString configFile();  // <configDir>/configuration.txt

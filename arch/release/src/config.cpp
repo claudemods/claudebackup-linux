@@ -18,7 +18,7 @@ QString username()
     return name;
 }
 
-QString configDir() { return QStringLiteral("/home/") + username() + QStringLiteral("/.config/cmi"); }
+QString configDir() { return QStringLiteral("/home/") + username() + QStringLiteral("/.config/claudebackup"); }
 QString buildDir() { return configDir() + QStringLiteral("/build-image-arch-img"); }
 QString liveOsDir() { return buildDir() + QStringLiteral("/LiveOS"); }
 QString configFile() { return configDir() + QStringLiteral("/configuration.txt"); }

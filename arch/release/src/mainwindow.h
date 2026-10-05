@@ -91,7 +91,7 @@ private:
     void cloneErofs(bool lzma);
 
     SudoManager* m_sudo;
-    ConfigState m_config;  // loaded from / saved to ~/.config/cmi/configuration.txt
+    ConfigState m_config;  // loaded from / saved to ~/.config/claudebackup/configuration.txt
 
     QWidget* m_statusPanel = nullptr;
     QPushButton* m_expandButton = nullptr;

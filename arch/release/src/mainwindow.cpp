@@ -158,7 +158,7 @@ MainWindow::MainWindow(SudoManager* sudo, QWidget* parent)
     root->addWidget(splitter, 1);
     setCentralWidget(central);
 
-    // Same as the original: load ~/.config/cmi/configuration.txt at startup.
+    // Same as the original: load ~/.config/claudebackup/configuration.txt at startup.
     loadConfig(m_config);
     refreshStatus();
 
