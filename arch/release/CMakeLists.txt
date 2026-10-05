@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(cmiadvanced VERSION 3.0 LANGUAGES CXX)
+project(claudebackup VERSION 3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,7 +39,7 @@ set(CMI_QRC "${CMAKE_CURRENT_BINARY_DIR}/resources.qrc")
 file(WRITE "${CMI_QRC}" "<!DOCTYPE RCC>\n<RCC version=\"1.0\">\n    <qresource prefix=\"/\">\n${CMI_QRC_ENTRIES}    </qresource>\n</RCC>\n")
 qt_add_big_resources(CMI_RESOURCES "${CMI_QRC}")
 
-qt_add_executable(cmiadvanced
+qt_add_executable(claudebackup
     src/main.cpp
     src/theme.h          src/theme.cpp
     src/config.h         src/config.cpp
@@ -52,6 +52,6 @@ qt_add_executable(cmiadvanced
 )
 
 # util: forkpty() (commands run in a real terminal so progress bars animate)
-target_link_libraries(cmiadvanced PRIVATE Qt6::Widgets Qt6::Network util)
+target_link_libraries(claudebackup PRIVATE Qt6::Widgets Qt6::Network util)
 
-install(TARGETS cmiadvanced RUNTIME DESTINATION bin)
+install(TARGETS claudebackup RUNTIME DESTINATION bin)
