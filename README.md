@@ -35,7 +35,7 @@
 
 <div align="center">
 
-## 🖥️ claudebackup linux Beta v3.0 05-10-2026 🚀
+## 🖥️ claudebackup linux Beta v1.0 05-10-2026 🚀
 
 <p align="center">Clone your running system into a bootable live ISO - now with a full Qt6 desktop app</p>
 
