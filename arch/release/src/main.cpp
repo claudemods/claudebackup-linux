@@ -16,7 +16,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("cmiadvanced"));
+    QApplication::setApplicationName(QStringLiteral("claudebackup-linux"));
     QApplication::setApplicationDisplayName(Theme::VersionText);
     Theme::apply(app);
 

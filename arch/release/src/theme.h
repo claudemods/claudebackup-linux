@@ -7,7 +7,7 @@ class QApplication;
 
 namespace Theme {
 
-inline const QString VersionText = QStringLiteral("cmiadvanced Beta v3.0 04-10-2026");
+inline const QString VersionText = QStringLiteral("claudebackup linux Beta v3.0 05-10-2026");
 inline const QString Tagline = QStringLiteral(
     "Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix!");
 

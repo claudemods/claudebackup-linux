@@ -228,7 +228,7 @@ QWidget* MainWindow::buildMenus()
     m_menus = new QStackedWidget;
     m_menus->setMinimumWidth(380);
 
-    m_mainPage = buildMenuPage(QStringLiteral("cmiadvanced main menu:"), {
+    m_mainPage = buildMenuPage(QStringLiteral("claudebackup linux main menu:"), {
         {QStringLiteral("Guide"), [this] { showGuide(); }},
         {QStringLiteral("Setup Scripts"), [this] { openSetupMenu(); }},
         {QStringLiteral("Create System Images"), [this] { openCloneMenu(); }},

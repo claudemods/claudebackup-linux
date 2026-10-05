@@ -66,7 +66,7 @@ PasswordDialog::PasswordDialog(SudoManager* sudo, QWidget* parent)
     layout->addWidget(makeBanner(6, this));
 
     auto* info = new QLabel(QStringLiteral(
-        "cmiadvanced runs system commands with sudo (mounting, mksquashfs, mkinitcpio, xorriso, dd...).\n"
+        "claudebackup linux runs system commands with sudo (mounting, mksquashfs, mkinitcpio, xorriso, dd...).\n"
         "Enter your sudo password once - it is kept in memory only while the app is running."));
     info->setWordWrap(true);
     layout->addWidget(info);
