@@ -136,10 +136,10 @@ claudebackup
 
 | Path | Purpose |
 |---|---|
-| `~/.config/cmi/configuration.txt` | Saved setup settings |
-| `~/.config/cmi/build-image-arch-img/` | ISO build tree |
-| `~/.config/cmi/build-image-arch-img/LiveOS/rootfs.img` | Cloned system image |
-| `~/.config/cmi/calamares-files/` | Calamares packages and config |
+| `~/.config/claudebackup/configuration.txt` | Saved setup settings |
+| `~/.config/claudebackup/build-image-arch-img/` | ISO build tree |
+| `~/.config/claudebackup/build-image-arch-img/LiveOS/rootfs.img` | Cloned system image |
+| `~/.config/claudebackup/calamares-files/` | Calamares packages and config |
 
 ## 📝 Notes
 
