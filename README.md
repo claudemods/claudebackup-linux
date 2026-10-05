@@ -97,13 +97,13 @@ See the **[Arch Readme](https://github.com/claudemods/claudebackup-linux/tree/ma
 The three zip files (`build-image-arch-img.zip`, `calamares-files.zip`, `claudemods.zip`) must sit in the folder **above** `qt6app`:
 
 ```
+claudebackup-linux-main/arch/release
+├── CMakeLists.txt
+├── build.sh
 ├── build-image-arch-img.zip
 ├── calamares-files.zip
 ├── claudemods.zip
-├── guide/readme.txt        (optional - built-in guide)
-├───── CMakeLists.txt
-├────build.sh
-└────src/
+└── src/
 ```
 
 ```bash
