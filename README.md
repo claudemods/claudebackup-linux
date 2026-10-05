@@ -14,7 +14,7 @@
     <img src="https://i.postimg.cc/ydBbyvRt/Deepseek.jpg" alt="DeepSeek Logo" style="height: 30px; vertical-align: middle;">
   </a>
 
-  ## [ Guide ](https://github.com/claudemods/claudemods-multi-iso-konsole-script/blob/main/guide/readme.md)
+  ## [ Guide ](https://github.com/claudemods/claudebackup-linux/tree/main/arch/release/guide)
 
   ## [ Support Me ](https://www.paypal.com/paypalme/claudemods?country.x=GB&locale)
 
@@ -146,7 +146,7 @@ claudebackup
 - If settings don't save because of permissions, fix the folder's owner once:
 
 ```bash
-sudo chown -R $USER:$USER ~/.config/cmi
+sudo chown -R $USER:$USER ~/.config/claudebackup
 ```
 
 ---
