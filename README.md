@@ -101,14 +101,13 @@ The three zip files (`build-image-arch-img.zip`, `calamares-files.zip`, `claudem
 ├── calamares-files.zip
 ├── claudemods.zip
 ├── guide/readme.txt        (optional - built-in guide)
-└── qt6app/
-    ├── CMakeLists.txt
-    ├── build.sh
-    └── src/
+├───── CMakeLists.txt
+├────build.sh
+└────src/
 ```
 
 ```bash
-cd qt6app
+cd claudebackup-linux-main/arch/release
 bash build.sh
 ```
 
