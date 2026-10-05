@@ -1,51 +1,103 @@
-# claudebackup linux
+<p align="center">
+<img src="https://i.postimg.cc/JhMRf2RZ/claudemods-03-17-2025.gif">
 
-**claudebackup linux Beta v3.0 05-10-2026**
+<div align="center">
 
-A Qt6 desktop app for cloning your running Arch Linux / CachyOS system into a bootable live ISO, with a Calamares installer included.
+  <a href="https://www.linux.org" target="_blank"><img src="https://img.shields.io/badge/OS-Linux-e06c75?style=for-the-badge&logo=linux" /></a>
 
-It is the graphical version of the cmiadvanced terminal script, and it runs the same commands.
+  <a href="https://archlinux.org" target="_blank"><img src="https://img.shields.io/badge/DISTRO-Arch-56b6c2?style=for-the-badge&logo=arch-linux" /></a>
+  <a href="https://ubuntu.com/" target="_blank"><img src="https://img.shields.io/badge/DISTRO-Ubuntu-E95420?style=for-the-badge&logo=Ubuntu" /></a>
+  <a href="https://www.debian.org" target="_blank"><img src="https://img.shields.io/badge/DISTRO-Debian-CE0058?style=for-the-badge&logo=Debian" /></a>
 
-*Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix!*
+  <a href="https://chat.deepseek.com/" target="_blank">
+    <img src="https://img.shields.io/badge/Built_Using-DeepSeek-4D6BFE?style=for-the-badge&logo=deepseek&logoColor=4D6BFE" alt="Built Using DeepSeek">
+    <img src="https://i.postimg.cc/ydBbyvRt/Deepseek.jpg" alt="DeepSeek Logo" style="height: 30px; vertical-align: middle;">
+  </a>
+
+  ## [ Guide ](https://github.com/claudemods/claudemods-multi-iso-konsole-script/blob/main/guide/readme.md)
+
+  ## [ Support Me ](https://www.paypal.com/paypalme/claudemods?country.x=GB&locale)
+
+</div>
+
+<div align="center">
+
+  [![Ko-Fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&label=claudemods&color=3399FF&Linux&logo=ko-fi&logoColor=white)](https://ko-fi.com/claudemods)
+  [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&label=claudemods&color=A836FF&logo=GitHub-Sponsors&logoColor=#white)](https://github.com/sponsors/claudemods)
+
+</div>
+
+<div align="center">
+  <h5 align="center">Hello, welcome to claudebackup linux - a Qt6 Multi ISO Creator Written in C++!</h5>
+</div>
+
+<p align="center"> Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix! </p>
+
+<div align="center">
+
+## 🖥️ claudebackup linux Beta v3.0 05-10-2026 🚀
+
+<p align="center">Clone your running system into a bootable live ISO - now with a full Qt6 desktop app</p>
+
+<p align="center">For UEFI Ext4/Btrfs Systems Without Separate Swap Or Home</p>
 
 ---
 
-## Features
+![C++](https://img.shields.io/badge/C++-20-blue) ![Qt](https://img.shields.io/badge/Qt-6-41CD52) ![License](https://img.shields.io/badge/license-MIT-green)
 
-- **Clone your running system** into a SquashFS image (zstd or xz) or an EROFS image (lz4hc or lzma).
-- **Generate a bootable ISO** with xorriso. It boots on both BIOS and UEFI machines (hybrid GRUB).
-- **Write the ISO to a USB drive** with `dd`, with a live progress readout.
-- **Calamares installer**: install and configure it with the claudemods branding, then launch it.
-- **CmiAdvancedInstaller**: a custom ext4/btrfs installer for squashfs and erofs images.
-- **Built-in editor** for the GRUB config, the boot text and the Calamares config files.
-- **Asks for your sudo password once.** It is kept in memory only while the app is open, and is never saved to disk.
-- **Live output panel.** Command output is shown in cyan, and progress bars animate as they would in a terminal.
-- **The output panel expands automatically** while a job runs, so you can see the whole log.
-- **Pop-up dialogs answer script questions**, for example the Calamares configuration choices.
-- **Setup checklist.** It shows which steps are done and is saved to `~/.config/cmi/configuration.txt`.
-- **Dark blue theme** with the red claudemods banner.
-- **Fits small screens**, including handhelds; the menus scroll.
+</div>
+
+## 🐧 Supported Distributions
+
+| Distro | Status | Readme |
+|---|---|---|
+| <img src="https://img.shields.io/badge/-Arch-56b6c2?style=flat&logo=arch-linux&logoColor=white" /> **Arch / CachyOS** | ✅ **Available** | [Arch Readme](https://github.com/claudemods/claudebackup-linux/tree/main/arch/release) |
+| <img src="https://img.shields.io/badge/-Ubuntu-E95420?style=flat&logo=ubuntu&logoColor=white" /> **Ubuntu** | ⏸️ **On Hold** | Coming later |
+| <img src="https://img.shields.io/badge/-Debian-CE0058?style=flat&logo=debian&logoColor=white" /> **Debian** | ⏸️ **On Hold** | Coming later |
+
+> **Ubuntu and Debian support is on hold.** Arch Linux and CachyOS are the only supported systems for now.
 
 ---
 
-## Requirements
+## ✨ Features
 
-- **Arch Linux** or **CachyOS**
-- Qt6 (`qt6-base`), CMake, GCC
-- Tools used by the app:
+- 🖥️ **Qt6 desktop app** with a dark blue theme and the red claudemods banner
+- 🔐 **Asks for your sudo password once** - kept in memory only while the app is open, never saved to disk
+- 🚀 Generate bootable ISOs (BIOS + UEFI hybrid GRUB) with custom configurations
+- 🛠️ Installs the latest Calamares with options for ext4 or btrfs, so you can install your system after cloning and booting
+- 🛠️ Customizable Calamares branding
+- 🤖 Kernel selection and initramfs generation (needed for the ISO)
+- 🔄 Uses bind mount to bind the system to a folder before compression
+- 🖼️ Create compressed system images, squashfs or erofs (Recommended Option: **Erofs Lzma Level 109**)
+- 🗜️ Slow SquashFS compression options with xz/zstd support (zstd supports compression levels 1-22)
+- 🗜️ Erofs compression with Lz4hc/Lzma support (Lz4hc levels 1-12, Lzma levels 1-109)
+- 🔍 SHA512 checksum generation
+- 💽 Install ISO to USB with live `dd` progress
+- 📊 Disk usage reporting
+- ✏️ Built-in editor for GRUB config, boot text and Calamares config files
+- 💬 Pop-up dialogs answer script questions (e.g. the Calamares ext4/btrfs and squashfs/erofs choices)
+- ⏱️ Live output log - animated progress bars, cyan command output, auto-expands while a job runs
+- ✅ Setup checklist saved to `~/.config/cmi/configuration.txt`
+- 📱 Works on small screens and handhelds - menus scroll instead of squashing
 
-```bash
-sudo pacman -S --needed git rsync squashfs-tools xorriso grub dosfstools unzip nano arch-install-scripts erofs-utils mkinitcpio-archiso mtools parted pv
+## 📋 Requirements
+
+- Linux system (Arch / CachyOS - Ubuntu and Debian on hold)
+- GCC compiler (C++20 compatible), CMake, Qt6 (`qt6-base`)
+- Root privileges (sudo access)
+- Base Arch Packages: `rsync` `squashfs-tools` `xorriso` `grub` `dosfstools` `unzip` `arch-install-scripts` `bash-completion` `erofs-utils` `findutils` `jq` `libarchive` `libisoburn` `lsb-release` `lvm2` `mkinitcpio-archiso` `mkinitcpio-nfs-utils` `mtools` `nbd` `pacman-contrib` `nano` `wget` `parted` `procps-ng` `pv` `python` `sshfs` `syslinux` `xdg-utils` `zsh-completions` `kernel-modules-hook` `virt-manager` `qt6-base` `cmake` `gcc`
+
+## 💾 Installation
+
+### Arch / CachyOS
+
+See the **[Arch Readme](https://github.com/claudemods/claudebackup-linux/tree/main/arch/release)** for the install command.
+
+### Build From Source
+
+The three zip files (`build-image-arch-img.zip`, `calamares-files.zip`, `claudemods.zip`) must sit in the folder **above** `qt6app`:
+
 ```
-
----
-
-## Building
-
-The three zip files that get embedded in the app must sit in the folder **above** `qt6app`:
-
-```
-dev-branch/
 ├── build-image-arch-img.zip
 ├── calamares-files.zip
 ├── claudemods.zip
@@ -56,8 +108,6 @@ dev-branch/
     └── src/
 ```
 
-### Quick build and install
-
 ```bash
 cd qt6app
 bash build.sh
@@ -65,77 +115,24 @@ bash build.sh
 
 This installs the build tools, compiles the app and installs it to `/usr/bin/claudebackup`.
 
-### Manual build
-
-```bash
-cd qt6app
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j"$(nproc)"
-sudo install -Dm755 build/claudebackup /usr/bin/claudebackup
-```
-
-If the zips are somewhere else:
-
-```bash
-cmake -S . -B build -DCMI_DATA_DIR=/path/to/folder/with/zips
-```
-
----
-
-## Usage
+Then run:
 
 ```bash
 claudebackup
 ```
 
-Enter your sudo password when it asks, then follow the menus.
+### Ubuntu / Debian
 
-### 1. Setup Scripts
+⏸️ On hold - coming later.
 
-Work through each step until every box in **Current Configuration** is green:
+## 🧭 Usage
 
-| Step | What it does |
-|---|---|
-| Extract Needed Files | Unpacks the build files and Calamares files to `~/.config/cmi`, then runs `extrainstalls.sh` |
-| Set Clone Directory | Folder where `clone_system_temp` is created (the bind mount) |
-| Set ISO Tag | ISO volume label, e.g. `2026` |
-| Set ISO Name | ISO file name, e.g. `claudemods.iso` |
-| Set Output Directory | Folder the ISO is saved to |
-| Select vmlinuz | The kernel to boot the ISO with |
-| mkinitcpio Config | Installs `11-dm-initramfs.rules` |
-| Generate mkinitcpio | Builds the live initramfs |
-| Edit GRUB Config | `grub.cfg` for the ISO |
-| Edit Boot Text | `kernels.cfg` boot menu entries |
-| Edit Calamares Branding | `branding.desc` |
-| Edit Calamares 1st / 2nd initcpio.conf | Calamares initcpio module configs |
+1. **Setup Scripts** - work through every step until all boxes in *Current Configuration* are green
+2. **Create System Images** - clone your system (zstd / xz squashfs, or lz4hc / lzma erofs)
+3. **Generate Bootable Isos** - builds the ISO into your output directory
+4. **Install ISO To USB** or **Launch Calamares** to install
 
-### 2. Create System Images
-
-| Option | Compression |
-|---|---|
-| Clone Current System (zstd) | SquashFS, zstd level 1-22 |
-| Clone Current System (xz) | SquashFS, xz |
-| Clone Current System (Lz4hc) | EROFS, lz4hc level 1-12 (fast) |
-| Clone Current System (Lzma) | EROFS, lzma level 1-109 |
-
-The image is saved as `~/.config/cmi/build-image-arch-img/LiveOS/rootfs.img`, with a `.sha512` checksum next to it.
-
-### 3. Generate Bootable Isos
-
-Builds the ISO into your output directory and changes its owner to your user.
-
-### Other menu options
-
-- **Guide**: shows the readme.
-- **Check Disk Usage**: runs `df -h`.
-- **Install ISO To USB**: pick an ISO and a drive, then it is written with `dd`. **This erases the drive.**
-- **CmiAdvancedInstaller**: opens the installer in your terminal app.
-- **Launch Calamares**: starts the Calamares installer.
-- **Update Script**: downloads and runs the latest installer from GitHub.
-
----
-
-## Files
+## 📁 Files
 
 | Path | Purpose |
 |---|---|
@@ -143,23 +140,19 @@ Builds the ISO into your output directory and changes its owner to your user.
 | `~/.config/cmi/build-image-arch-img/` | ISO build tree |
 | `~/.config/cmi/build-image-arch-img/LiveOS/rootfs.img` | Cloned system image |
 | `~/.config/cmi/calamares-files/` | Calamares packages and config |
-| `~/.config/cmi/readme.txt` | Guide (optional) |
 
----
+## 📝 Notes
 
-## Notes
-
-- Commands run as root through sudo. `$USER` and `$HOME` still point to your own account.
 - If settings don't save because of permissions, fix the folder's owner once:
 
 ```bash
 sudo chown -R $USER:$USER ~/.config/cmi
 ```
 
-- Only Arch Linux and CachyOS are supported.
-
 ---
 
-## Credits
+<div align="center">
 
 **claudemods** - claudemods101@gmail.com
+
+</div>
