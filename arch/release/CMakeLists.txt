@@ -8,9 +8,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.3 REQUIRED COMPONENTS Widgets Network)
 qt_standard_project_setup()
 
-# Folder holding build-image-arch-img.zip, calamares-files.zip and claudemods.zip
-# (the parent of this qt6 folder by default). Override with -DCMI_DATA_DIR=/path
-set(CMI_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Folder containing the cmiadvanced zip payloads")
+# Folder holding build-image-arch-img.zip, calamares-files.zip and claudemods.zip:
+# this folder if the zips are here, otherwise the folder above it.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build-image-arch-img.zip")
+    set(CMI_DEFAULT_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(CMI_DEFAULT_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif()
+set(CMI_DATA_DIR "${CMI_DEFAULT_DATA_DIR}" CACHE PATH "Folder containing the zip payloads")
 get_filename_component(CMI_DATA_DIR "${CMI_DATA_DIR}" ABSOLUTE)
 
 set(CMI_ZIPS build-image-arch-img.zip calamares-files.zip claudemods.zip)
@@ -18,14 +23,15 @@ set(CMI_QRC_ENTRIES "")
 foreach(zip IN LISTS CMI_ZIPS)
     set(zip_path "${CMI_DATA_DIR}/${zip}")
     if(NOT EXISTS "${zip_path}")
-        message(FATAL_ERROR "Missing ${zip_path}\n"
-                            "Put the zip files next to this folder or pass -DCMI_DATA_DIR=/folder/with/zips")
+        message(FATAL_ERROR "Missing ${zip}\n"
+                            "Put build-image-arch-img.zip, calamares-files.zip and claudemods.zip "
+                            "in the same folder as CMakeLists.txt, then run: bash build.sh")
     endif()
     string(APPEND CMI_QRC_ENTRIES "        <file alias=\"zips/${zip}\">${zip_path}</file>\n")
 endforeach()
 
-# The guide is optional; the app shows ~/.config/cmi/readme.txt when it exists.
-set(CMI_GUIDE_FILE "${CMI_DATA_DIR}/guide/readme.txt" CACHE FILEPATH "Guide shown when ~/.config/cmi/readme.txt is missing")
+# The guide is optional; the app shows ~/.config/claudebackup/readme.txt when it exists.
+set(CMI_GUIDE_FILE "${CMI_DATA_DIR}/guide/readme.txt" CACHE FILEPATH "Guide shown when ~/.config/claudebackup/readme.txt is missing")
 if(EXISTS "${CMI_GUIDE_FILE}")
     get_filename_component(CMI_GUIDE_FILE "${CMI_GUIDE_FILE}" ABSOLUTE)
     string(APPEND CMI_QRC_ENTRIES "        <file alias=\"guide/readme.txt\">${CMI_GUIDE_FILE}</file>\n")
