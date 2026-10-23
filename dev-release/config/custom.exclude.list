@@ -1,0 +1,19 @@
+# /etc/claudebackup-linux/custom.exclude.list
+# Paths excluded from filesystem.squashfs (relative to /). Prefix a line with '#' to include it.
+
+# Docker & containerd
+var/lib/docker/
+var/lib/containerd/
+home/*/.docker/
+
+# Podman, LXC, LXD, systemd-nspawn
+var/lib/containers/
+home/*/.local/share/containers/
+var/lib/lxc/
+var/lib/lxd/
+var/lib/machines/
+
+# Snap
+var/lib/snapd/
+var/snap/
+snap/
