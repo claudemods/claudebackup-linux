@@ -126,7 +126,6 @@ Use the arrow keys and Enter to move around the menu.
 | Path | Purpose |
 |---|---|
 | `~/.config/claudebackup-linux/configuration.txt` | Saved setup settings |
-| `/etc/claudebackup-linux/custom.yaml` | Optional defaults (live user, work dir, compression) |
 | `/etc/claudebackup-linux/custom.exclude.list` | Paths left out of the ISO |
 | `/home/claudebackup/` | Default work directory (build tree and ISO) |
 | `/var/log/claudebackup-linux.log` | Build log |
