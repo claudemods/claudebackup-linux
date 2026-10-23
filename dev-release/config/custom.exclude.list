@@ -1,19 +1,25 @@
 # /etc/claudebackup-linux/custom.exclude.list
-# Paths excluded from filesystem.squashfs (relative to /). Prefix a line with '#' to include it.
+# Nothing is excluded by default: the clone contains everything on the system.
+# Remove the '#' in front of a line to leave that path out of the ISO (paths are relative to /).
 
 # Docker & containerd
-var/lib/docker/
-var/lib/containerd/
-home/*/.docker/
+#var/lib/docker/
+#var/lib/containerd/
+#home/*/.docker/
 
 # Podman, LXC, LXD, systemd-nspawn
-var/lib/containers/
-home/*/.local/share/containers/
-var/lib/lxc/
-var/lib/lxd/
-var/lib/machines/
+#var/lib/containers/
+#home/*/.local/share/containers/
+#var/lib/lxc/
+#var/lib/lxd/
+#var/lib/machines/
 
 # Snap
-var/lib/snapd/
-var/snap/
-snap/
+#var/lib/snapd/
+#var/snap/
+#snap/
+
+# Package caches (large, safe to leave out)
+#var/cache/pacman/pkg/*
+#var/cache/apt/archives/*
+#var/cache/dnf/*

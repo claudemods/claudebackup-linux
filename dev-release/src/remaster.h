@@ -7,13 +7,10 @@
 
 // Options chosen in the setup menu
 struct RemasterOptions {
-    std::string mode = "standard";    // standard | clone
     std::string workDir;              // empty = default
     std::string outputDir;            // empty = work dir
     std::string isoName;              // empty = auto-generated
     std::string algo;                 // zstd | xz | gzip | lz4
-    std::string user;
-    std::string password;
     std::string stopAfter;
     int level = 0;
     int ramMode = -1;                 // -1 = default, 0/1 = override
@@ -33,14 +30,10 @@ inline Context makeContext(const RemasterOptions& o) {
     Context c;
     c.distro = detectDistro();
     c.settings = Settings();
-    c.mode = o.mode;
     if (!o.algo.empty()) c.settings.compressionAlgo = o.algo;
     if (o.level > 0) c.settings.compressionLevel = o.level;
-    if (!o.user.empty()) c.settings.user = o.user;
-    if (!o.password.empty()) c.settings.password = o.password;
     if (o.ramMode >= 0) c.settings.ramMode = (o.ramMode == 1);
     c.ramModeEnabled = c.settings.ramMode;
-    c.hasCalamares = commandExists("calamares");
     c.isGitHubAction = isDirectory("/home/runner/work");
     c.stopAfter = o.stopAfter;
 
@@ -51,7 +44,7 @@ inline Context makeContext(const RemasterOptions& o) {
     while (snapshotDir.size() > 1 && snapshotDir.back() == '/') snapshotDir.pop_back();
 
     std::string name = o.isoName;
-    if (name.empty()) name = makeIsoName(c.distro, o.mode, "");
+    if (name.empty()) name = makeIsoName(c.distro, "");
     else if (!endsWith(name, ".iso")) name += ".iso";
 
     c.isoDir = snapshotDir + "/isodir";
@@ -70,9 +63,10 @@ inline std::vector<std::string> missingTools() {
 }
 
 inline std::string installToolsCommand(const Distro& d) {
-    if (d.family == "debian")   return "apt-get install -y squashfs-tools xorriso mtools dosfstools curl";
-    if (d.family == "archlinux" || d.family == "manjaro") return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools curl";
-    if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl";
+    if (d.family == "debian")   return "apt-get install -y squashfs-tools xorriso mtools dosfstools curl live-boot live-boot-initramfs-tools";
+    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools curl archiso mkinitcpio-archiso mkinitcpio-nfs-utils";
+    if (d.family == "manjaro")  return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools curl mkinitcpio-nfs-utils manjaro-tools-iso";
+    if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
     return "";
@@ -85,7 +79,7 @@ inline bool run(const RemasterOptions& opts) {
     Context c = makeContext(opts);
     g_workDir = c.workDir;
 
-    logNormal("Distro: " + c.distro.prettyName + " (family: " + c.distro.family + ", mode: " + c.mode + ")");
+    logNormal("Distro: " + c.distro.prettyName + " (family: " + c.distro.family + ")");
     if (!c.distro.supported()) { logError("Distro '" + c.distro.distroID + "' is not mapped to a supported family."); return false; }
 
     auto missing = missingTools();
@@ -107,7 +101,7 @@ inline bool run(const RemasterOptions& opts) {
     mkdirP(c.isoDir);
 
     if (!native::ensureBootloaders()) { logError("Failed to download bootloaders."); return false; }
-    logNormal("Generating exclude list (" + c.mode + " mode)...");
+    logNormal("Generating exclude list...");
     c.excludeList = native::generateExcludeList(c);
 
     auto steps = plan::build(c);

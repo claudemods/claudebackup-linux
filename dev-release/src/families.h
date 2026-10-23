@@ -51,32 +51,24 @@ fi
 
 echo "-> Generating live initramfs Debian/Ubuntu/Kylin ($KERNEL_VERSION)..."
 
-# Essential modules for live ISO boot and virtual storage controllers
-mkdir -p /etc/initramfs-tools
-touch /etc/initramfs-tools/modules
-for mod in virtio_pci virtio_blk virtio_scsi isofs overlay; do
-    if ! grep -qs "^$mod" /etc/initramfs-tools/modules; then
-        echo "$mod" >> /etc/initramfs-tools/modules
-    fi
-done
-
-if command -v mkinitramfs >/dev/null 2>&1; then
-    mkinitramfs -o /boot/cdb-initrd.img "$KERNEL_VERSION"
-elif [ -x /usr/sbin/update-initramfs.orig.initramfs-tools ]; then
-    /usr/sbin/update-initramfs.orig.initramfs-tools -c -k "$KERNEL_VERSION" -b /boot
-    [ -f "/boot/initrd.img-$KERNEL_VERSION" ] && cp -f "/boot/initrd.img-$KERNEL_VERSION" /boot/cdb-initrd.img
-elif command -v update-initramfs >/dev/null 2>&1; then
-    touch /.live-build
-    update-initramfs -c -k "$KERNEL_VERSION" -b /boot || update-initramfs -u -k "$KERNEL_VERSION"
-    rm -f /.live-build
-    [ -f "/boot/initrd.img-$KERNEL_VERSION" ] && cp -f "/boot/initrd.img-$KERNEL_VERSION" /boot/cdb-initrd.img
-elif command -v dracut >/dev/null 2>&1; then
-    dracut -f --no-hostonly --add "dmsquash-live livenet" /boot/cdb-initrd.img "$KERNEL_VERSION"
-else
-    echo "[FATAL ERROR] No initramfs generator found (mkinitramfs/update-initramfs/dracut)!"
+if ! command -v mkinitramfs >/dev/null 2>&1; then
+    echo "[FATAL ERROR] mkinitramfs not found (install initramfs-tools)!"
     exit 1
 fi
 
+# Work on a throwaway copy of the initramfs config so /etc/initramfs-tools in the clone stays
+# exactly as it is. Adds the modules a live boot needs (virtual storage, iso9660, overlay).
+CONF_DIR=$(mktemp -d /tmp/cdb-initramfs.XXXXXX)
+trap 'rm -rf "$CONF_DIR"' EXIT
+cp -a /etc/initramfs-tools/. "$CONF_DIR/" 2>/dev/null || true
+touch "$CONF_DIR/modules"
+for mod in virtio_pci virtio_blk virtio_scsi isofs overlay; do
+    if ! grep -qs "^$mod" "$CONF_DIR/modules"; then
+        echo "$mod" >> "$CONF_DIR/modules"
+    fi
+done
+
+mkinitramfs -d "$CONF_DIR" -o /boot/cdb-initrd.img "$KERNEL_VERSION"
 if [ ! -f /boot/cdb-initrd.img ]; then
     echo "[FATAL ERROR] /boot/cdb-initrd.img was not generated!"
     exit 1
@@ -102,8 +94,8 @@ fi
 # Garuda / EndeavourOS branch (dracut)
 echo "-> Garuda/EndeavourOS detected: generating live initramfs via dracut"
 if ! command -v dracut > /dev/null 2>&1; then
-    echo "-> dracut missing. Installing on the fly..."
-    pacman -Sy --noconfirm dracut || { echo "[FATAL ERROR] Unable to install dracut"; exit 1; }
+    echo "[FATAL ERROR] dracut is not installed (sudo pacman -S dracut)."
+    exit 1
 fi
 # -N disables host-only mode (crucial for live environments)
 dracut -N -f --add "dmsquash-live" --add-drivers "sr_mod iso9660 squashfs loop overlay" --kver "$KERNEL_VERSION" "/boot/cdb-initrd.img"
@@ -113,11 +105,6 @@ dracut -N -f --add "dmsquash-live" --add-drivers "sr_mod iso9660 squashfs loop o
 
     s += R"CDB(
 # Arch / Manjaro branch (mkinitcpio)
-if ! pacman -Qq mkinitcpio-nfs-utils > /dev/null 2>&1; then
-    echo "-> mkinitcpio-nfs-utils missing. Installing on the fly..."
-    pacman -Sy --noconfirm mkinitcpio-nfs-utils || { echo "[WARNING] Unable to install mkinitcpio-nfs-utils"; }
-fi
-
 cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
 mkdir -p /etc/mkinitcpio.conf.d.bak /usr/lib/mkinitcpio.conf.d.bak
 [ "$(ls -A /etc/mkinitcpio.conf.d/ 2>/dev/null)" ] && mv /etc/mkinitcpio.conf.d/*.conf /etc/mkinitcpio.conf.d.bak/
@@ -134,8 +121,8 @@ rm -rf /etc/mkinitcpio.conf.d.bak /usr/lib/mkinitcpio.conf.d.bak
     if (c.distro.family == "manjaro") {
         s += R"CDB(
 if ! pacman -Qq manjaro-tools-iso > /dev/null 2>&1; then
-    echo "-> manjaro-tools-iso missing. Installing on the fly..."
-    pacman -Sy --noconfirm manjaro-tools-iso || { echo "[FATAL ERROR] Unable to install manjaro-tools-iso"; exit 1; }
+    echo "[FATAL ERROR] manjaro-tools-iso is not installed (sudo pacman -S manjaro-tools-iso)."
+    exit 1
 fi
 cat << 'EOF' > /etc/mkinitcpio.conf
 MODULES=(loop dm-snapshot btrfs sr_mod isofs)
@@ -145,13 +132,9 @@ EOF
 )CDB";
     } else {
         s += R"CDB(
-if ! pacman -Qq archiso > /dev/null 2>&1; then
-    echo "-> archiso missing. Installing on the fly..."
-    pacman -Sy --noconfirm archiso || { echo "[FATAL ERROR] Unable to install archiso"; exit 1; }
-fi
 if ! pacman -Qq mkinitcpio-archiso > /dev/null 2>&1; then
-    echo "-> mkinitcpio-archiso missing. Installing on the fly..."
-    pacman -Sy --noconfirm mkinitcpio-archiso || { echo "[FATAL ERROR] Unable to install mkinitcpio-archiso"; exit 1; }
+    echo "[FATAL ERROR] mkinitcpio-archiso is not installed (sudo pacman -S archiso mkinitcpio-archiso)."
+    exit 1
 fi
 cat << 'EOF' > /etc/mkinitcpio.conf
 MODULES=(loop dm-snapshot btrfs sr_mod isofs)
@@ -195,6 +178,9 @@ set -e
 INIT_FILE="/usr/share/mkinitfs/initramfs-init"
 PATCH_FILE="/tmp/cdb-sidecar.patch"
 CUSTOM_INIT="/tmp/initramfs-cdb-init"
+
+# mkinitfs reads its live config from /etc/mkinitfs: remove what we add so the clone is unchanged
+trap 'rm -f /etc/mkinitfs/live.conf /etc/mkinitfs/features.d/cdblive.modules "$CUSTOM_INIT" "$PATCH_FILE"' EXIT
 
 echo "-> 1. Generating the CDB-SIDECAR rescue (standard /run/live/medium)..."
 cat << 'EOF' > "$PATCH_FILE"

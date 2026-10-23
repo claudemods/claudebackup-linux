@@ -18,18 +18,10 @@ namespace plan {
 
 inline std::string scriptPath(const std::string& name) { return STAGING_DIR + "/scripts/" + name; }
 
-// Write a file inside liveroot (the "template" module)
-inline bool writeLiveFile(const Context& c, const std::string& dest, const std::string& content, mode_t mode) {
-    std::string full = c.liveRoot + dest;
-    mkdirP(dirName(full));
-    return writeFile(full, content, mode);
-}
-
 inline std::vector<Step> build(const Context& c) {
     std::vector<Step> steps;
     const std::string iso = c.isoDir;
     const std::string live = c.liveRoot;
-    const bool userMode = (c.mode != "clone");
 
     // 1. Mount
     steps.push_back({"mount-logic", "Chroot environment and mount point preparation",
@@ -88,101 +80,12 @@ inline std::vector<Step> build(const Context& c) {
         return native::runShell("if [ -f " + img + " ] && [ -f " + cfg + " ]; then\n    mcopy -i " + img + " -o " + cfg + " ::/EFI/BOOT/grub.cfg\nfi\n", "") == 0;
     }});
 
-    // 6. Identity (clone keeps the real users)
-    if (userMode) {
-        steps.push_back({"identity", "Live user injection and password sanitization",
-            [&c]() { return native::injectLiveUser(c); }});
-    }
-
-    // 7. Sanitize system files
-    steps.push_back({"sanitize-system-files", "Sanitize fstab, crypttab and basic system config for the live system", [live]() {
-        std::string r = shq(live);
-        std::string cmd =
-            "echo '# UNCONFIGURED FSTAB' > " + r + "/etc/fstab\n"
-            "echo '# UNCONFIGURED CRYPTTAB' > " + r + "/etc/crypttab\n"
-            "chmod 644 " + r + "/etc/fstab " + r + "/etc/crypttab\n"
-            "if [ -d " + r + "/etc/initramfs-tools/conf.d ]; then\n    echo 'RESUME=none' > " + r + "/etc/initramfs-tools/conf.d/resume\nfi\n"
-            "if [ -f " + r + "/etc/initramfs-tools/initramfs.conf ]; then\n    sed -i 's/^RESUME=.*/RESUME=none/' " + r + "/etc/initramfs-tools/initramfs.conf\nfi\n"
-            "if [ ! -e " + r + "/etc/localtime ] && [ ! -L " + r + "/etc/localtime ]; then\n    ln -sf /usr/share/zoneinfo/UTC " + r + "/etc/localtime\nfi\n"
-            "if [ -f " + r + "/etc/default/locale ]; then\n    :\nelif [ ! -f " + r + "/etc/locale.conf ]; then\n    echo 'LANG=C.UTF-8' > " + r + "/etc/locale.conf\nfi\n"
-            "if [ ! -f " + r + "/etc/hostname ]; then\n    echo 'live-system' > " + r + "/etc/hostname\nfi\n";
-        return native::runShell(cmd, "") == 0;
-    }});
-
     // 8. Initramfs (chrooted)
     steps.push_back({"initramfs", "Live environment-specific initramfs generation", [&c, live]() {
         return native::runShell(families::initramfsCmd(c), live) == 0;
     }});
     steps.push_back({"copy-kernel-initrd", "Copy kernel and initramfs to the live ISO directory", [&c]() {
         return native::runShell(families::copyKernelCmd(c), "") == 0;
-    }});
-
-    // 10-11. sudoers and polkit
-    steps.push_back({"conf-live-sudoers", "Configure sudoers for the live user", [&c]() {
-        return writeLiveFile(c, "/etc/sudoers.d/00-live",
-            c.liveUser() + " ALL=(ALL) NOPASSWD:ALL\n%wheel ALL=(ALL) NOPASSWD:ALL\n%sudo ALL=(ALL) NOPASSWD:ALL\n", 0440);
-    }});
-
-    steps.push_back({"polkit-policy", "Polkit policy for the installer launcher", [&c]() {
-        std::string xml =
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            "<!DOCTYPE policyconfig PUBLIC\n"
-            "\"-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN\"\n"
-            "\"http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd\">\n"
-            "<policyconfig>\n"
-            "  <vendor>claudemods</vendor>\n"
-            "  <action id=\"net.claudemods.claudebackup.run\">\n"
-            "    <description>Run System Installer</description>\n"
-            "    <message>Authentication is required to run the system installer</message>\n"
-            "    <defaults>\n"
-            "      <allow_any>no</allow_any>\n"
-            "      <allow_inactive>no</allow_inactive>\n"
-            "      <allow_active>yes</allow_active>\n"
-            "    </defaults>\n"
-            "    <annotate key=\"org.freedesktop.policykit.exec.path\">/usr/bin/" + APP_BIN + "</annotate>\n"
-            "    <annotate key=\"org.freedesktop.policykit.exec.allow_gui\">true</annotate>\n"
-            "  </action>\n"
-            "</policyconfig>\n";
-        return writeLiveFile(c, "/usr/share/polkit-1/actions/net.claudemods.claudebackup.policy", xml, 0644);
-    }});
-
-    steps.push_back({"polkit-rules", "Polkit rules: require authentication for cloning personal data", [&c]() {
-        std::string rules =
-            "/* claudebackup linux: require authentication for system cloning. */\n"
-            "polkit.addRule(function(action, subject) {\n"
-            "    if (action.id === \"net.claudemods.claudebackup.run\" ||\n"
-            "        (action.id === \"org.freedesktop.policykit.exec\" && action.lookup(\"program\") === \"/usr/bin/" + APP_BIN + "\")) {\n"
-            "        var cmd = action.lookup(\"command_line\");\n"
-            "        if (cmd && (cmd.indexOf(\"--clone\") !== -1)) {\n"
-            "            return polkit.Result.AUTH_ADMIN;\n"
-            "        }\n"
-            "    }\n"
-            "});\n";
-        return writeLiveFile(c, "/usr/share/polkit-1/rules.d/49-claudebackup-linux.rules", rules, 0644);
-    }});
-
-    // 12. Desktop launcher
-    steps.push_back({"create-live-launcher", "Add universal desktop launcher", [&c]() {
-        if (!c.hasCalamares) return true;   // launcher only makes sense when Calamares is installed
-        std::string d = scripts::LAUNCHER_DESKTOP;
-        d = replaceAll(d, "@@EXEC@@", "pkexec calamares");
-        d = replaceAll(d, "@@TERMINAL@@", "false");
-        return writeLiveFile(c, "/usr/share/applications/install-system.desktop", d, 0755);
-    }});
-
-    // 13. Trust agent
-    steps.push_back({"trust-agent-script", "Copy dynamic trust script for the desktop launcher", [&c]() {
-        return writeLiveFile(c, "/usr/local/bin/trust-desktop", scripts::TRUST_DESKTOP, 0755);
-    }});
-    steps.push_back({"trust-agent-autostart", "Enable XDG Autostart for the trust agent", [&c]() {
-        return writeLiveFile(c, "/etc/xdg/autostart/trust-installer.desktop",
-            "[Desktop Entry]\nType=Application\nName=Trust Installer\nExec=/usr/local/bin/trust-desktop\nHidden=false\nNoDisplay=true\n", 0644);
-    }});
-
-    // 14. Autologin
-    steps.push_back({"autologin-gui", "Set up autologin for the live user", [&c]() {
-        native::configureAutologin(c, c.liveUser());
-        return true;
     }});
 
     // 16. Squashfs

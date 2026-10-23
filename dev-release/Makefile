@@ -1,6 +1,6 @@
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -pthread
-LDLIBS   := -lcrypt -pthread
+LDLIBS   := -pthread
 
 TARGET := claudebackup-linux
 HDRS   := $(wildcard src/*.h)

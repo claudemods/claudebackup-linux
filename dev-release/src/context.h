@@ -10,8 +10,6 @@
 struct Context {
     Distro distro;
     Settings settings;
-
-    std::string mode = "standard";   // standard | clone
     std::string workDir;             // e.g. /home/claudebackup
     std::string isoDir;              // workDir/isodir
     std::string liveRoot;            // workDir/liveroot
@@ -21,10 +19,7 @@ struct Context {
     std::string stopAfter;           // stop after this step name
     bool debugPlan = false;
     bool isGitHubAction = false;
-    bool hasCalamares = false;
     bool ramModeEnabled = true;
-
-    std::string liveUser() const { return settings.user.empty() ? "live" : settings.user; }
 };
 
 #endif

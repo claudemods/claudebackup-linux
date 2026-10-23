@@ -91,8 +91,8 @@ inline Distro detectDistro() {
     return d;
 }
 
-// "claudemods-<distro>-<codename>-<host>-<mode>-<arch>-<timestamp>.iso"
-inline std::string makeIsoName(const Distro& d, const std::string& mode, const std::string& prefix) {
+// "claudemods-<distro>-<codename>-<host>-<arch>-<timestamp>.iso"
+inline std::string makeIsoName(const Distro& d, const std::string& prefix) {
     char host[256] = "unknown";
     gethostname(host, sizeof(host) - 1);
     char ts[64];
@@ -102,7 +102,6 @@ inline std::string makeIsoName(const Distro& d, const std::string& mode, const s
     std::string name = prefix.empty() ? "claudemods-" + toLower(d.distroID) : prefix;
     if (prefix.empty() && !d.codename.empty()) name += "-" + toLower(d.codename);
     if (prefix.empty()) name += "-" + toLower(host);
-    if (mode != "standard") name += "-" + mode;
     name += "-" + d.arch + "-" + ts + ".iso";
     return replaceAll(name, " ", "-");
 }

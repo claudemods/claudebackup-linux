@@ -29,9 +29,6 @@ struct MenuConfig {
     std::string outputDir;     // empty = work dir
     std::string algo = "zstd";
     int level = 3;
-    std::string user = "live";
-    std::string password = "evolution";
-    bool clone = false;
     bool ramMode = true;
 };
 MenuConfig mcfg;
@@ -48,9 +45,6 @@ void saveConfig() {
     f << "outputDir=" << mcfg.outputDir << "\n";
     f << "algo=" << mcfg.algo << "\n";
     f << "level=" << mcfg.level << "\n";
-    f << "user=" << mcfg.user << "\n";
-    f << "password=" << mcfg.password << "\n";
-    f << "clone=" << (mcfg.clone ? "1" : "0") << "\n";
     f << "ramMode=" << (mcfg.ramMode ? "1" : "0") << "\n";
 }
 
@@ -64,23 +58,17 @@ void loadConfig() {
         else if (k == "outputDir") mcfg.outputDir = v;
         else if (k == "algo") mcfg.algo = v;
         else if (k == "level") mcfg.level = atoi(v.c_str());
-        else if (k == "user") mcfg.user = v;
-        else if (k == "password") mcfg.password = v;
-        else if (k == "clone") mcfg.clone = (v == "1");
         else if (k == "ramMode") mcfg.ramMode = (v == "1");
     }
 }
 
 RemasterOptions currentOptions() {
     RemasterOptions o;
-    o.mode = mcfg.clone ? "clone" : "standard";
     o.workDir = mcfg.workDir;
     o.outputDir = mcfg.outputDir;
     o.isoName = mcfg.isoName;
     o.algo = mcfg.algo;
     o.level = mcfg.level;
-    o.user = mcfg.user;
-    o.password = mcfg.password;
     o.ramMode = mcfg.ramMode ? 1 : 0;
     return o;
 }
@@ -183,7 +171,6 @@ std::string statusBlock() {
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
-    s += checkLine(true, std::string("Mode: ") + (mcfg.clone ? "Clone (keeps users and /home)" : "Standard"));
     s += checkLine(true, "Compression: " + mcfg.algo + " level " + std::to_string(mcfg.level));
     return s;
 }
@@ -282,18 +269,27 @@ int pickFromMenu(const std::string& title, const std::vector<std::string>& items
 void showGuide() {
     clearScreen();
     std::cout << COLOR_CYAN << APP_NAME << " " << APP_VERSION << " - guide" << COLOR_RESET << "\n\n" << COLOR_GREEN <<
-        "1. Setup > Install Needed Tools      installs squashfs-tools, xorriso, mtools, dosfstools, curl\n"
+        "A full clone: your own users, passwords, settings and /home are copied into the ISO\n"
+        "exactly as they are. No live account is created and nothing is added to the clone.\n"
+        "Every box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n"
+        "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
+        "                                     plus your distro's live-boot packages\n"
         "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
-        "3. Setup > set ISO name, directories, mode and compression\n"
-        "     Standard mode: removes your users and builds a fresh live user\n"
-        "     Clone mode:    keeps your real users, passwords and /home\n"
-        "4. Create Bootable ISO               builds the ISO for the distro you are running\n"
-        "5. Install ISO To USB                writes a finished ISO to a drive\n\n"
-        "Run this tool inside the system you want to back up. Build space needed is roughly\n"
-        "twice the size of the compressed ISO. Log: " << LOG_FILE << COLOR_RESET << "\n";
+        "3. Setup > ISO Name, Work Directory, Output Directory\n"
+        "     ISO name blank = auto. Output directory blank = the work directory.\n"
+        "4. Setup > Compression and Level     zstd (1-22, default 3), xz or gzip\n"
+        "5. Setup > RAM Mode                  adds a 'toram' boot entry\n"
+        "6. Detected System And Build Steps   check your distro says 'Support: yes'\n"
+        "7. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
+        "                                     initramfs, kernel, squashfs, ISO\n"
+        "                                     (everything is unmounted at the end, even on Ctrl+C)\n"
+        "8. Install ISO To USB / Launch Calamares\n"
+        "     USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n"
+        "Free space needed is roughly twice the size of the finished ISO.\n"
+        "Fedora: run 'sudo setenforce 0' before building.\n"
+        "Log: " << LOG_FILE << COLOR_RESET << "\n";
     pressAnyKey();
 }
-
 void showSystemInfo() {
     clearScreen();
     Context c = remaster::makeContext(currentOptions());
@@ -374,10 +370,8 @@ void showSetupMenu() {
         "Set ISO Name (blank = auto)",
         "Set Work Directory",
         "Set Output Directory",
-        "Toggle Clone Mode (keep users and /home)",
         "Set Compression (zstd / xz / gzip)",
         "Set Compression Level",
-        "Set Live User And Password",
         "Toggle RAM Mode Boot Entry",
         "Back to Main Menu"
     };
@@ -400,28 +394,19 @@ void showSetupMenu() {
             case 2: mcfg.isoName = getUserInput("ISO name (e.g. my-backup.iso, blank = auto): "); saveConfig(); break;
             case 3: mcfg.workDir = getUserInput("Work directory (blank = " + DEFAULT_WORK_DIR + "): "); saveConfig(); break;
             case 4: mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); break;
-            case 5: mcfg.clone = !mcfg.clone; saveConfig(); break;
-            case 6: {
+            case 5: {
                 std::string a = getUserInput("Algorithm (zstd/xz/gzip/lz4): ");
                 if (a == "zstd" || a == "xz" || a == "gzip" || a == "lz4") { mcfg.algo = a; saveConfig(); }
                 else { std::cout << COLOR_RED << "Unknown algorithm." << COLOR_RESET << std::endl; pressAnyKey(); }
                 break;
             }
-            case 7: {
+            case 6: {
                 int l = atoi(getUserInput("Level (zstd 1-22, default 3): ").c_str());
                 if (l > 0) { mcfg.level = l; saveConfig(); }
                 break;
             }
-            case 8: {
-                std::string u = getUserInput("Live user (blank = keep '" + mcfg.user + "'): ");
-                if (!u.empty()) mcfg.user = u;
-                std::string p = getUserInput("Live password (blank = keep current): ");
-                if (!p.empty()) mcfg.password = p;
-                saveConfig();
-                break;
-            }
-            case 9: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
-            case 10: return;
+            case 7: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
+            case 8: return;
         }
     }
 }
