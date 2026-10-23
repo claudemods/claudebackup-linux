@@ -135,7 +135,6 @@ Use the arrow keys and Enter to move around the menu.
 
 - Builds need free space of roughly twice the size of the finished ISO.
 - On Fedora, set SELinux to permissive before building: `sudo setenforce 0`.
-- `--crypted` (LUKS), the built-in installer and RISC-V images are not available yet.
 
 ---
 
