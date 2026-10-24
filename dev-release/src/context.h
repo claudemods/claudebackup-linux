@@ -17,6 +17,8 @@ struct Context {
     std::string symlinkIsoPath;      // set when target-dir differs from workDir
     std::string excludeList;         // generated exclude list for mksquashfs
     std::string stopAfter;           // stop after this step name
+    std::string cloneDir;            // "/" is bind-mounted here for mksquashfs (Setup > Clone Directory)
+    std::string isoTag = "2026";     // Arch: ISO volume label, kernels.cfg label= (cmiadvanced ISO Tag)
     bool debugPlan = false;
     bool isGitHubAction = false;
     bool ramModeEnabled = true;

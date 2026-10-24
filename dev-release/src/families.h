@@ -12,7 +12,7 @@
 //
 // The Arch family instead uses the claudemods zip method (ported from cmiadvanced): the ISO tree
 // and mkinitcpio hooks come from the embedded build-image-arch-img.zip, the image is
-// LiveOS/rootfs.img and GRUB boots it with label=<volume label>.
+// LiveOS/rootfs.img and GRUB boots it with label=<ISO Tag> (the volume label, default 2026).
 
 namespace families {
 
@@ -35,7 +35,7 @@ inline std::string bootParams(const Context& c) {
     if (f == "debian")
         return "boot=live components cow_spacesize=2G";
     if (f == "archlinux")
-        return "label=" + LIVE_LABEL;
+        return "label=" + c.isoTag;
     if (f == "fedora" || f == "opensuse")
         return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.shell rd.debug selinux=0 cow_spacesize=2G";
     if (f == "alpine")
@@ -164,7 +164,7 @@ echo "-> ISO tree ready."
 }
 
 // Arch: boot/grub/kernels.cfg (sourced by the zip's grub.cfg). GRUB passes "$title" as $2, so
-// "linux /boot/vmlinuz-$2" expands to /boot/vmlinuz-x86_64 <options> label=<volume label>.
+// "linux /boot/vmlinuz-$2" expands to /boot/vmlinuz-x86_64 <options> label=<ISO Tag>.
 inline std::string archKernelsCfg(const Context& c) {
     std::string name = replaceAll(c.distro.prettyName, "\"", "");
     std::string s =

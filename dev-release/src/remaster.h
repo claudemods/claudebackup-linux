@@ -12,6 +12,8 @@ struct RemasterOptions {
     std::string isoName;              // empty = auto-generated
     std::string algo;                 // zstd | xz | gzip | lz4
     std::string stopAfter;
+    std::string isoTag;               // Arch volume label, empty = 2026
+    std::string cloneDir;             // bind point for "/", empty = workDir/clone_system_temp
     int level = 0;
     int ramMode = -1;                 // -1 = default, 0/1 = override
 };
@@ -19,9 +21,11 @@ struct RemasterOptions {
 namespace remaster {
 
 inline std::string g_workDir;
+inline std::string g_cloneDir;
 
 inline void onSignal(int sig) {
     // Never leave bind mounts of / behind
+    native::unbindRoot(g_cloneDir);
     native::umountTree(g_workDir);
     _exit(128 + sig);
 }
@@ -36,9 +40,13 @@ inline Context makeContext(const RemasterOptions& o) {
     c.ramModeEnabled = c.settings.ramMode;
     c.isGitHubAction = isDirectory("/home/runner/work");
     c.stopAfter = o.stopAfter;
+    if (!o.isoTag.empty()) c.isoTag = o.isoTag;
 
     c.workDir = !o.workDir.empty() ? o.workDir : c.settings.workDir;
     while (c.workDir.size() > 1 && c.workDir.back() == '/') c.workDir.pop_back();
+
+    c.cloneDir = !o.cloneDir.empty() ? o.cloneDir : c.workDir + "/clone_system_temp";
+    while (c.cloneDir.size() > 1 && c.cloneDir.back() == '/') c.cloneDir.pop_back();
 
     std::string snapshotDir = !o.outputDir.empty() ? o.outputDir : c.workDir;
     while (snapshotDir.size() > 1 && snapshotDir.back() == '/') snapshotDir.pop_back();
@@ -105,6 +113,11 @@ inline bool run(const RemasterOptions& opts) {
 
     Context c = makeContext(opts);
     g_workDir = c.workDir;
+    g_cloneDir = c.cloneDir;
+    if (c.cloneDir == "/" || startsWith(c.workDir + "/", c.cloneDir + "/")) {
+        logError("Clone directory '" + c.cloneDir + "' cannot be / or contain the work directory.");
+        return false;
+    }
 
     logNormal("Distro: " + c.distro.prettyName + " (family: " + c.distro.family + ")");
     if (!c.distro.supported()) { logError("Distro '" + c.distro.distroID + "' is not mapped to a supported family."); return false; }
@@ -149,6 +162,7 @@ inline bool run(const RemasterOptions& opts) {
         }
     }
 
+    if (!native::unbindRoot(c.cloneDir)) ok = false;
     if (!native::umountTree(c.workDir)) ok = false;
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);

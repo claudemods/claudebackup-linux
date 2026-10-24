@@ -30,8 +30,12 @@ struct MenuConfig {
     std::string algo = "zstd";
     int level = 3;
     bool ramMode = true;
+    std::string isoTag;        // Arch volume label, empty = 2026
+    std::string cloneDir;      // <parent>/clone_system_temp, "/" is bound here; empty = default
 };
 MenuConfig mcfg;
+
+std::string defaultCloneDir() { return "/home/" + USERNAME + "/clone_system_temp"; }
 
 std::string configDirPath() { return "/home/" + USERNAME + "/.config/" + APP_BIN; }
 std::string configFilePath() { return configDirPath() + "/configuration.txt"; }
@@ -46,6 +50,8 @@ void saveConfig() {
     f << "algo=" << mcfg.algo << "\n";
     f << "level=" << mcfg.level << "\n";
     f << "ramMode=" << (mcfg.ramMode ? "1" : "0") << "\n";
+    f << "isoTag=" << mcfg.isoTag << "\n";
+    f << "cloneDir=" << mcfg.cloneDir << "\n";
 }
 
 void loadConfig() {
@@ -59,6 +65,8 @@ void loadConfig() {
         else if (k == "algo") mcfg.algo = v;
         else if (k == "level") mcfg.level = atoi(v.c_str());
         else if (k == "ramMode") mcfg.ramMode = (v == "1");
+        else if (k == "isoTag") mcfg.isoTag = v;
+        else if (k == "cloneDir") mcfg.cloneDir = v;
     }
 }
 
@@ -70,6 +78,8 @@ RemasterOptions currentOptions() {
     o.algo = mcfg.algo;
     o.level = mcfg.level;
     o.ramMode = mcfg.ramMode ? 1 : 0;
+    o.isoTag = mcfg.isoTag;
+    o.cloneDir = mcfg.cloneDir.empty() ? defaultCloneDir() : mcfg.cloneDir;
     return o;
 }
 
@@ -167,10 +177,14 @@ std::string statusBlock() {
     s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? " (family: " + d.family + ")" : " (not supported)"));
     s += checkLine(toolsOk, "Needed Tools");
     s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
-    if (d.family == "archlinux") s += checkLine(commandExists("calamares"), "Calamares");
+    if (d.family == "archlinux") {
+        s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
+        s += checkLine(commandExists("calamares"), "Calamares");
+    }
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
+    s += checkLine(!mcfg.cloneDir.empty(), "Clone Directory: " + (mcfg.cloneDir.empty() ? "Not set (uses " + defaultCloneDir() + ")" : mcfg.cloneDir));
     s += checkLine(true, "Compression: " + mcfg.algo + " level " + std::to_string(mcfg.level));
     return s;
 }
@@ -271,14 +285,18 @@ void showGuide() {
     std::cout << COLOR_CYAN << APP_NAME << " " << APP_VERSION << " - guide" << COLOR_RESET << "\n\n" << COLOR_GREEN <<
         "A full clone: your own users, passwords, settings and /home are copied into the ISO\n"
         "exactly as they are. No live account is created and nothing is added to the clone.\n"
+        "The squashfs is made from the whole system bind-mounted (mount --bind /) at your Clone\n"
+        "Directory (all distros). A bind of '/' only shows the root filesystem: separate partitions\n"
+        "or btrfs subvolumes (e.g. @home, /boot) are NOT included.\n"
         "Every box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n"
         "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
         "                                     plus your distro's live-boot packages\n"
         "                                     (Arch: unzip, mkinitcpio, device-mapper, gnupg)\n"
         "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
         "                                     (Arch: not needed, the claudemods zip is built in)\n"
-        "3. Setup > ISO Name, Work Directory, Output Directory\n"
+        "3. Setup > ISO Name, Work Directory, Output Directory, Clone Directory\n"
         "     ISO name blank = auto. Output directory blank = the work directory.\n"
+        "     Clone directory: parent folder, the system is bound at <parent>/clone_system_temp.\n"
         "4. Setup > Compression and Level     zstd (1-22, default 3), xz or gzip\n"
         "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
         "6. Setup > Install Calamares (Arch)  claudemods Calamares, ext4 or btrfs zstd:22;\n"
@@ -290,7 +308,9 @@ void showGuide() {
         "9. Install ISO To USB / Launch Calamares\n"
         "     USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n"
         "Arch family (Arch, CachyOS, ...): the ISO is built from the embedded claudemods zip -\n"
-        "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks.\n"
+        "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks - with the\n"
+        "original cmiadvanced mksquashfs and xorriso commands. Setup > Set ISO Tag sets the\n"
+        "volume label the live system boots from (default 2026).\n"
         "Manjaro is not supported.\n\n"
         "Free space needed is roughly twice the size of the finished ISO.\n"
         "Fedora: run 'sudo setenforce 0' before building.\n"
@@ -377,9 +397,11 @@ void showSetupMenu() {
         "Set ISO Name (blank = auto)",
         "Set Work Directory",
         "Set Output Directory",
+        "Set Clone Directory (system is bind-mounted here)",
         "Set Compression (zstd / xz / gzip)",
         "Set Compression Level",
         "Toggle RAM Mode Boot Entry",
+        "Set ISO Tag (Arch volume label, default 2026)",
         "Install Calamares (Arch: ext4 / btrfs zstd:22)",
         "Back to Main Menu"
     };
@@ -404,18 +426,47 @@ void showSetupMenu() {
             case 3: mcfg.workDir = getUserInput("Work directory (blank = " + DEFAULT_WORK_DIR + "): "); saveConfig(); break;
             case 4: mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); break;
             case 5: {
+                // cmiadvanced setCloneDir: parent folder + /clone_system_temp
+                std::string def = "/home/" + USERNAME;
+                std::cout << COLOR_GREEN << "Current clone directory: " << (mcfg.cloneDir.empty() ? "Not set" : mcfg.cloneDir) << "\n"
+                          << "Default directory: " << def << COLOR_RESET << std::endl;
+                std::string parent = getUserInput("Enter parent directory for clone_system_temp folder (e.g., " + def + " or $USER): ");
+                size_t pos = parent.find("$USER");
+                if (pos != std::string::npos) parent.replace(pos, 5, USERNAME);
+                if (parent.empty()) parent = def;
+                while (parent.size() > 1 && parent.back() == '/') parent.pop_back();
+                if (parent[0] != '/') {
+                    std::cout << COLOR_RED << "Please enter an absolute path (starting with /)." << COLOR_RESET << std::endl;
+                    pressAnyKey();
+                    break;
+                }
+                mcfg.cloneDir = (parent == "/" ? "" : parent) + "/clone_system_temp";
+                mkdirP(mcfg.cloneDir);
+                saveConfig();
+                break;
+            }
+            case 6: {
                 std::string a = getUserInput("Algorithm (zstd/xz/gzip/lz4): ");
                 if (a == "zstd" || a == "xz" || a == "gzip" || a == "lz4") { mcfg.algo = a; saveConfig(); }
                 else { std::cout << COLOR_RED << "Unknown algorithm." << COLOR_RESET << std::endl; pressAnyKey(); }
                 break;
             }
-            case 6: {
+            case 7: {
                 int l = atoi(getUserInput("Level (zstd 1-22, default 3): ").c_str());
                 if (l > 0) { mcfg.level = l; saveConfig(); }
                 break;
             }
-            case 7: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
-            case 8: {
+            case 8: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
+            case 9: {
+                // Volume label and kernels.cfg label=, so no spaces or quotes
+                std::string tag = getUserInput("Enter ISO tag (e.g., default is 2026, blank = 2026): ");
+                if (tag.find_first_of(" \t\"'") != std::string::npos) {
+                    std::cout << COLOR_RED << "The ISO tag cannot contain spaces or quotes." << COLOR_RESET << std::endl;
+                    pressAnyKey();
+                } else { mcfg.isoTag = tag; saveConfig(); }
+                break;
+            }
+            case 10: {
                 Distro d = detectDistro();
                 if (d.family != "archlinux") {
                     std::cout << COLOR_RED << "Calamares setup is only available for the Arch family." << COLOR_RESET << std::endl;
@@ -431,7 +482,7 @@ void showSetupMenu() {
                 pressAnyKey();
                 break;
             }
-            case 9: return;
+            case 11: return;
         }
     }
 }

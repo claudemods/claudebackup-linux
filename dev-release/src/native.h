@@ -247,8 +247,10 @@ inline std::string generateExcludeList(const Context& c) {
     ex.push_back(rel + "/.overlay/.??*");
     ex.push_back(rel + "/isodir/*");
     ex.push_back(rel + "/*.iso");
-    // /home is bind-mounted into liveroot, so liveroot would see itself
+    // The squashfs source is "/" bind-mounted at the clone directory, so the work directory's own
+    // liveroot copy and the (empty) bind point show up inside it
     ex.push_back(c.liveRoot.substr(1));
+    ex.push_back(c.cloneDir.substr(1));
 
     for (const char* e : {
         "boot/cdb-initrd.img",
@@ -288,6 +290,30 @@ inline std::string squashfsCompressionArgs(const std::string& algo, const std::s
     return "-comp " + algo;
 }
 
+// Squashfs source for every family: the whole system bind-mounted at the user's clone directory
+// (cmiadvanced mountSystemToCloneDir: mount --bind / <cloneDir>)
+inline std::string cloneDir(const Context& c) { return c.cloneDir; }
+
+// mount --bind / <dir>, kept private (never propagates back) and read-only (mksquashfs only reads)
+inline bool bindRoot(const std::string& dir) {
+    mkdirP(dir);
+    if (isMounted(dir)) return true;
+    logNormal("Mounting system to: " + dir);
+    if (!doMount("/", dir, nullptr, MS_BIND)) return false;
+    if (!doMount(nullptr, dir, nullptr, MS_PRIVATE) ||
+        !doMount(nullptr, dir, nullptr, MS_REMOUNT | MS_BIND | MS_RDONLY)) {
+        umountPath(dir);
+        return false;
+    }
+    logSuccess("System mounted successfully to: " + dir);
+    return true;
+}
+
+inline bool unbindRoot(const std::string& dir) {
+    if (dir.empty() || !isMounted(dir)) return true;
+    return umountPath(dir);
+}
+
 inline bool runMksquashfs(const Context& c, const std::string& dest) {
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
     int lvl = c.settings.compressionLevel > 0 ? c.settings.compressionLevel : 3;
@@ -295,14 +321,29 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
     if (procs == 0) procs = 1;
 
     mkdirP(dirName(dest));
+    const std::string src = cloneDir(c);
+    if (!bindRoot(src)) return false;
 
-    std::string cmd = "mksquashfs " + shq(c.liveRoot) + " " + shq(dest) +
-        " -b 1M -processors " + std::to_string(procs) + " -noappend -progress -wildcards" +
-        " -p 'mnt d 0755 root root' -p 'media d 0755 root root'" +
-        " -ef " + shq(c.excludeList) + " " + squashfsCompressionArgs(algo, std::to_string(lvl), c.distro.arch);
+    std::string cmd;
+    if (c.distro.family == "archlinux") {
+        // Original cmiadvanced createSquashFS / createSquashFS_xz flags (256K blocks), plus the
+        // exclude list so the work directory and host-only files stay out
+        std::string comp = algo == "xz" ? "-comp xz -b 256K -Xbcj x86"
+                                        : "-comp " + algo + (algo == "zstd" ? " -Xcompression-level " + std::to_string(lvl) : "") + " -b 256K";
+        cmd = "mksquashfs " + shq(src) + " " + shq(dest) + " -noappend " + comp +
+            " -wildcards -p 'mnt d 0755 root root' -p 'media d 0755 root root' -ef " + shq(c.excludeList);
+    } else {
+        cmd = "mksquashfs " + shq(src) + " " + shq(dest) +
+            " -b 1M -processors " + std::to_string(procs) + " -noappend -progress -wildcards" +
+            " -p 'mnt d 0755 root root' -p 'media d 0755 root root'" +
+            " -ef " + shq(c.excludeList) + " " + squashfsCompressionArgs(algo, std::to_string(lvl), c.distro.arch);
+    }
 
     logNormal("Running: " + cmd);
-    return runCommand(cmd) == 0;
+    bool ok = runCommand(cmd) == 0;
+    logNormal("Unmounting bind mount...");
+    if (!unbindRoot(src)) ok = false;
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -323,30 +364,37 @@ inline void writeDotDisk(const Context& c) {
         "# claudebackup linux " + APP_VERSION + "\n\nVolinfo: " + iso + "\nImage created at: " + ts + "\n");
 }
 
-// Arch: GRUB hybrid layout of the claudemods zip tree (cmiadvanced createISO)
+// Arch: the original cmiadvanced createISO() xorriso command, unchanged except that it reads the
+// ISO tree from isodir (BUILD_DIR there) and runs without sudo (we are already root)
 inline bool runXorrisoArch(const Context& c) {
-    const std::string mbr = c.isoDir + "/boot/grub/i386-pc/boot_hybrid.img";
-    const std::string efiImg = c.isoDir + "/boot/efi.img";
-    if (!isRegularFile(mbr) || !isRegularFile(efiImg)) { logError("xorriso: GRUB boot images missing from " + c.isoDir); return false; }
+    const std::string BUILD_DIR = c.isoDir;
+    if (!isRegularFile(BUILD_DIR + "/boot/grub/i386-pc/boot_hybrid.img") || !isRegularFile(BUILD_DIR + "/boot/efi.img")) {
+        logError("xorriso: GRUB boot images missing from " + BUILD_DIR);
+        return false;
+    }
 
-    std::string cmd = "xorriso -as mkisofs"
-        " --modification-date=\"$(date +%Y%m%d%H%M%S00)\""
-        " --protective-msdos-label"
-        " -volid " + shq(LIVE_LABEL) +
-        " -appid 'claudemods Linux Live/Rescue CD'"
-        " -publisher 'claudemods claudemods101@gmail.com'"
-        " -preparer " + shq(APP_NAME + " " + APP_VERSION) +
-        " -r -graft-points -no-pad"
-        " --sort-weight 0 / --sort-weight 1 /boot"
-        " --grub2-mbr " + shq(mbr) +
-        " -partition_offset 16"
-        " -b boot/grub/i386-pc/eltorito.img -c boot.catalog"
-        " -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info"
-        " -eltorito-alt-boot"
-        " -append_partition 2 0xef " + shq(efiImg) +
-        " -e --interval:appended_partition_2:all:: -no-emul-boot"
-        " -iso-level 3"
-        " -o " + shq(c.isoPath) + " " + shq(c.isoDir);
+    std::string cmd = "xorriso -as mkisofs "
+    "--modification-date=\"$(date +%Y%m%d%H%M%S00)\" "
+    "--protective-msdos-label "
+    "-volid \"" + c.isoTag + "\" "
+    "-appid \"claudemods Linux Live/Rescue CD\" "
+    "-publisher \"claudemods claudemods101@gmail.com >\" "
+    "-preparer \"Prepared by user\" "
+    "-r -graft-points -no-pad "
+    "--sort-weight 0 / "
+    "--sort-weight 1 /boot "
+    "--grub2-mbr " + BUILD_DIR + "/boot/grub/i386-pc/boot_hybrid.img "
+    "-partition_offset 16 "
+    "-b boot/grub/i386-pc/eltorito.img "
+    "-c boot.catalog "
+    "-no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info "
+    "-eltorito-alt-boot "
+    "-append_partition 2 0xef " + BUILD_DIR + "/boot/efi.img "
+    "-e --interval:appended_partition_2:all:: "
+    "-no-emul-boot "
+    "-iso-level 3 "
+    "-o \"" + c.isoPath + "\" " +
+    BUILD_DIR;
 
     logNormal("Generating ISO (Hybrid BIOS/UEFI GRUB, claudemods tree): " + c.isoPath);
     return runCommand(cmd) == 0;
