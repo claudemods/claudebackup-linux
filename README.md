@@ -53,7 +53,7 @@ road map for the road to success
 
 stage 1 
 
-gather knowledge and make a new project called claudebackup-linux
+gather knowledge and make a new project called claudebackup-linux from existing functions in claudemods-multi-iso-konsole-script 
 
 
 stage 2
