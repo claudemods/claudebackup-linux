@@ -1,0 +1,135 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                      claudebackup linux Beta v1.0 Guide                      │
+│                "Create Bootable ISO Images from Your System"                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ QUICK START                                                                  │
+│                                                                              │
+│ 1) Build and run                                                             │
+│    cd claudebackup-linux/dev-release                                         │
+│    make                      compile the program (needs g++, make and ld)    │
+│    sudo make install         optional: install to /usr/bin                   │
+│    claudebackup-linux        start the menu (asks for sudo once)             │
+│                                                                              │
+│ 2) Main menu options                                                         │
+│    - Guide                           this text                               │
+│    - Setup                           everything you set before a build       │
+│    - Detected System And Build Steps your distro and the steps it will run   │
+│    - Create Bootable ISO             clones the system into an ISO           │
+│    - Check Disk Usage                shows df -h                             │
+│    - Install ISO To USB              writes an ISO to a drive                │
+│    - Launch Calamares                graphical installer (if installed)      │
+│                                                                              │
+│ 3) First run                                                                 │
+│    - Settings are saved in ~/.config/claudebackup-linux/configuration.txt    │
+│    - The build log is /var/log/claudebackup-linux.log                        │
+│    - The top of every screen shows "Current Configuration": [x] green =      │
+│      ready, [ ] red = still to do                                            │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ A FULL SYSTEM CLONE                                                          │
+│    The ISO is a copy of the system you run it on. Your own users, passwords, │
+│    settings and /home are copied exactly as they are. No live account is     │
+│    created and nothing is added to or changed inside the clone.              │
+│    Only these are left out: dev, proc, sys, run, tmp, mnt, media, the work   │
+│    folder, and files that stop a live boot (fstab, crypttab, mtab, swap and  │
+│    the persistent udev rules).                                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ STEP-BY-STEP BUILD GUIDE                                                     │
+│                                                                              │
+│ Step 1 - Setup > Install Needed Tools                                        │
+│    Installs squashfs-tools, xorriso, mtools, dosfstools and curl, plus the   │
+│    live-boot package for your family, with your package manager:             │
+│      Debian family   live-boot, live-boot-initramfs-tools                    │
+│      Arch            unzip, mkinitcpio, device-mapper, gnupg (no curl)       │
+│      Fedora          dracut-live                                             │
+│    These are installed on YOUR system first, so they are part of the clone.  │
+│    The build itself never installs anything. Box: Needed Tools.              │
+│                                                                              │
+│ Step 2 - Setup > Download Bootloaders                                        │
+│    One-off download of the BIOS/UEFI boot files (needs internet).            │
+│    Box: Bootloaders.                                                         │
+│    Arch: nothing to download - the claudemods zip is built into the binary.  │
+│    Box: Boot Files: embedded claudemods zip.                                 │
+│                                                                              │
+│ Step 3 - Setup > ISO Name, Work Directory, Output Directory                  │
+│    ISO Name: e.g. my-backup.iso. Blank = made from distro, hostname,         │
+│    architecture and time.                                                    │
+│    Work Directory: where the build happens (default /home/claudebackup).     │
+│    Output Directory: where the ISO is saved. Blank = the work directory.     │
+│                                                                              │
+│ Step 4 - Setup > Compression and Compression Level                           │
+│    zstd (default, level 1-22, default 3), xz or gzip. Higher level = smaller │
+│    ISO but a much slower build.                                              │
+│                                                                              │
+│ Step 5 - Setup > Toggle RAM Mode Boot Entry                                  │
+│    Adds a boot entry that copies the whole system into memory (toram;        │
+│    copytoram=y on Arch).                                                     │
+│                                                                              │
+│ Step 6 - Setup > Install Calamares (Arch only)                               │
+│    Installs the claudemods Calamares packages, config and branding from the  │
+│    built-in zips. Choose:                                                    │
+│      1) Default configuration (Ext4)                                         │
+│      2) Custom configuration with btrfs level 22 compression (zstd:22)       │
+│    The initcpio kernel preset is set to your running kernel automatically    │
+│    (e.g. linux-cachyos). Do this BEFORE building so the ISO contains it.     │
+│    Box: Calamares.                                                           │
+│                                                                              │
+│ Step 7 - Detected System And Build Steps                                     │
+│    Shows your distro, its family, the boot parameters and every step the     │
+│    build will run. Check that it says Support: yes.                          │
+│                                                                              │
+│ Step 8 - Create Bootable ISO                                                 │
+│    Needs root, the tools and the boot files. The build runs these steps:     │
+│     1) mount            bind-mounts your system into a work folder           │
+│     2) bootloaders      copies BIOS/UEFI boot files into the ISO tree        │
+│     3) EFI image        builds the FAT image UEFI boots from                 │
+│     4) menus            writes the GRUB / ISOLINUX boot menus                │
+│     5) initramfs        builds the live initramfs for your distro family     │
+│     6) kernel           copies the kernel and initrd into the ISO            │
+│     7) squashfs         compresses the system into filesystem.squashfs       │
+│     8) ISO              packs everything with xorriso (BIOS + UEFI)          │
+│    Arch family (the claudemods zip method):                                  │
+│     2) arch-boot-files  copies the zip's GRUB BIOS/UEFI tree and theme       │
+│     4) menus            writes boot/grub/kernels.cfg (label=CDB_LIVE)        │
+│     5) initramfs        mkinitcpio with the btrfs/ext4 claudemods hooks      │
+│     6) kernel           boot/vmlinuz-x86_64 + boot/initramfs-x86_64.img      │
+│     7) squashfs         compresses the system into LiveOS/rootfs.img (+sha512│
+│                         checksum)                                            │
+│    Everything is unmounted at the end - also if a step fails or you press    │
+│    Ctrl+C. The ISO is handed to your user.                                   │
+│                                                                              │
+│ Step 9 - Use the ISO                                                         │
+│    - Install ISO To USB: pick the ISO and the drive (e.g. /dev/sdb).         │
+│      EVERYTHING on that drive is erased.                                     │
+│    - Boot it in a virtual machine first (enable UEFI) before real hardware.  │
+│    - Launch Calamares to install the system from the live session.           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ SUPPORTED DISTRIBUTIONS                                                      │
+│    Debian family     Debian, Ubuntu, Mint, Pop, Kali, Devuan, openKylin      │
+│    Arch family       Arch, CachyOS, Archcraft, RebornOS, Garuda,             │
+│                      EndeavourOS (claudemods zip method)                     │
+│    Fedora family     Fedora, Nobara                                          │
+│    openSUSE family   Tumbleweed, Slowroll, Leap                              │
+│    Alpine                                                                    │
+│    Manjaro, BigLinux and BigCommunity are not supported.                     │
+│    The family is detected from /etc/os-release (ID and ID_LIKE).             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ PRO TIPS                                                                     │
+│    - Settings persist between runs; the menu shows the current state.        │
+│    - Free space needed is roughly twice the size of the finished ISO.        │
+│    - Close heavy applications before a build.                                │
+│    - Debian family: install live-boot only - do not install live-config.     │
+│    - Fedora: run  sudo setenforce 0  before building (SELinux permissive).   │
+│    - Arch: Calamares installs from /run/arch/bootmnt/LiveOS/rootfs.img.      │
+│    - Want to leave things out (Docker, Snap, caches)? Uncomment lines in     │
+│      /etc/claudebackup-linux/custom.exclude.list                             │
+│                                                                              │
+│ TROUBLESHOOTING                                                              │
+│    - "Missing tools": Setup > Install Needed Tools.                          │
+│    - "Failed to prepare the boot files": check internet, then Setup >        │
+│      Download Bootloaders (Arch: make sure unzip is installed).              │
+│    - "not mapped to a supported family": your distro is not supported yet.   │
+│    - "... is not installed": install the package it names, then rebuild.     │
+│    - A step failed: the message names the step; details are in               │
+│      /var/log/claudebackup-linux.log                                         │
+│    - Large systems take a long time to compress - be patient.                │
+╰──────────────────────────────────────────────────────────────────────────────╯

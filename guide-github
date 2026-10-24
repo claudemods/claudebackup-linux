@@ -1,0 +1,162 @@
+# 🚀 claudebackup linux Beta v1.0 Guide
+
+> 💿 **"Create Bootable ISO Images from Your System"**
+
+---
+
+## 🔧 Quick Start Guide
+
+### 1️⃣ Build and Run
+
+```bash
+git clone https://github.com/claudemods/claudebackup-linux.git
+cd claudebackup-linux/dev-release
+make                       # compile the program
+sudo make install          # optional: install to /usr/bin
+claudebackup-linux         # start the menu (asks for sudo once)
+```
+
+📦 You need `g++` and `make`. Everything else the build needs is installed from inside the app (step 1 below).
+
+---
+
+### 2️⃣ Main Menu Options
+
+| Function | Description |
+|----------|-------------|
+| 📖 **Guide** | Shows the in-app guide |
+| ⚙️ **Setup** | Everything you set before a build |
+| 🔎 **Detected System And Build Steps** | Your distro, its family and the steps the build will run |
+| 💿 **Create Bootable ISO** | Clone the system into a bootable ISO |
+| 📊 **Check Disk Usage** | View disk space information (`df -h`) |
+| 💽 **Install ISO To USB** | Write an ISO to a drive |
+| 🖥️ **Launch Calamares** | Graphical installer, if installed |
+
+---
+
+### 3️⃣ First Run Configuration
+
+The script will automatically:
+
+- 📁 Save your settings in `~/.config/claudebackup-linux/configuration.txt`
+- 📝 Write the build log to `/var/log/claudebackup-linux.log`
+- ✅ Show **Current Configuration** at the top of every screen - 🟢 `[✓]` ready, 🔴 `[ ]` still to do
+
+---
+
+## 📝 Step-by-Step Build Guide
+
+### 🧬 A Full System Clone
+
+The ISO is a copy of the system you run it on. Your own **users, passwords, settings and `/home`** are copied exactly as they are. **No live account is created** and nothing is added to or changed inside the clone.
+
+Only these are left out: `dev`, `proc`, `sys`, `run`, `tmp`, `mnt`, `media`, the work folder, and files that stop a live boot (`fstab`, `crypttab`, `mtab`, swap and the persistent udev rules).
+
+### 1️⃣ Install Needed Tools 🛠️
+
+**Setup → Install Needed Tools** installs `squashfs-tools`, `xorriso`, `mtools`, `dosfstools` and `curl`, plus the live-boot package for your family, with your package manager (`apt`, `pacman`, `dnf`, `zypper` or `apk`):
+
+| Family | Live-boot packages |
+|--------|--------------------|
+| Debian | `live-boot`, `live-boot-initramfs-tools` |
+| Arch | `archiso`, `mkinitcpio-archiso`, `mkinitcpio-nfs-utils` |
+| Manjaro | `manjaro-tools-iso`, `mkinitcpio-nfs-utils` |
+| Fedora | `dracut-live` |
+
+> 💡 These are installed on **your** system first, so they are part of the clone. The build itself never installs anything. Box: **Needed Tools**.
+### 2️⃣ Download Bootloaders ⬇️
+
+**Setup → Download Bootloaders** is a one-off download of the BIOS/UEFI boot files (needs internet). Box: **Bootloaders**.
+
+### 3️⃣ Name and Folders 📂
+
+| Setting | Description | Example |
+|---------|-------------|---------|
+| 📛 **Set ISO Name** | Output filename. Blank = made from distro, hostname, architecture and time | `my-backup.iso` |
+| 🏗️ **Set Work Directory** | Where the build happens | `/home/claudebackup` (default) |
+| 📂 **Set Output Directory** | Where the ISO is saved. Blank = the work directory | `/home/$USER/Downloads` |
+
+### 4️⃣ Compression 🗜️
+
+| Setting | Options |
+|---------|---------|
+| **Set Compression** | `zstd` (default), `xz`, `gzip` |
+| **Set Compression Level** | zstd `1-22` (default `3`) |
+
+Higher level = smaller ISO but a much slower build.
+
+### 5️⃣ RAM Mode 🧠
+
+**Setup → Toggle RAM Mode Boot Entry** adds a boot entry that copies the whole system into memory (`toram`).
+### 6️⃣ Check the Plan 🔎
+
+**Detected System And Build Steps** shows your distro, family, boot parameters and every step the build will run. Make sure it says **Support: yes**.
+
+### 7️⃣ Create Bootable ISO 💿
+
+Needs root (the app already asked), the tools and the bootloaders. The build runs:
+
+| # | Step | What happens |
+|---|------|--------------|
+| 1 | **mount** | Your system is bind-mounted into a work folder (no full copy needed) |
+| 2 | **bootloaders** | BIOS/UEFI boot files are copied into the ISO tree |
+| 3 | **EFI image** | The FAT image UEFI boots from is built |
+| 4 | **menus** | GRUB / ISOLINUX boot menus are written |
+| 5 | **initramfs** | The live initramfs is built for your distro family |
+| 6 | **kernel** | Kernel and initrd are copied into the ISO || 7 | **squashfs** | The system is compressed into `filesystem.squashfs` |
+| 8 | **ISO** | Everything is packed with `xorriso` (BIOS + UEFI hybrid) |
+
+🧹 Everything is unmounted at the end - also if a step fails or you press **Ctrl+C**. The finished ISO is owned by your user.
+
+### 8️⃣ Use the ISO 🎉
+
+- 💽 **Install ISO To USB** - pick the ISO and the drive (e.g. `/dev/sdb`). ⚠️ **Everything on that drive is erased.**
+- 🧪 **Test the ISO** in a virtual machine first (enable UEFI/OVMF)
+- 🖥️ **Launch Calamares** to install the system from the live session
+
+---
+
+## 🐧 Supported Distributions
+
+| Family | Distros |
+|--------|---------|
+| **Debian** | Debian, Ubuntu, Mint, Pop, Kali, Devuan, openKylin |
+| **Arch** | Arch, CachyOS, Archcraft, RebornOS, Garuda, EndeavourOS |
+| **Manjaro** | Manjaro, BigLinux, BigCommunity |
+| **Fedora** | Fedora, Nobara |
+| **openSUSE** | Tumbleweed, Slowroll, Leap |
+| **Alpine** | Alpine |
+
+The family is detected from `/etc/os-release` (`ID` and `ID_LIKE`).
+
+---
+
+## 💡 Pro Tips
+
+- 💾 Settings persist between runs in `~/.config/claudebackup-linux/configuration.txt`
+- 📊 Main menu shows the current configuration status
+- 📦 Free space needed is roughly **twice the size of the finished ISO**
+- 🐧 Debian family: install `live-boot` only - do not install `live-config`
+- 🐧 Fedora: run `sudo setenforce 0` before building (SELinux permissive)
+- 📂 Leave things out (Docker, Snap, caches) by uncommenting lines in `/etc/claudebackup-linux/custom.exclude.list`
+
+---
+
+## 🩺 Troubleshooting
+
+| Message | Fix |
+|---------|-----|
+| *Missing tools* | Setup → Install Needed Tools |
+| *… is not installed* | Install the package it names, then rebuild |
+| *Failed to download bootloaders* | Check your internet, then Setup → Download Bootloaders |
+| *not mapped to a supported family* | Your distro is not supported yet |
+| *Step '…' failed* | The message names the step - details are in `/var/log/claudebackup-linux.log` |
+
+---
+
+## ⚠️ Important Notes
+
+- 🔒 **Close heavy applications** before cloning
+- ⏳ Large systems take a long time to compress - **be patient**
+
+---
