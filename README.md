@@ -39,9 +39,9 @@
 
 ## 🖥️ claudebackup linux Beta v1.0 🚀
 
-<p align="center">Clone your running system into a bootable live ISO - one menu-driven C++ binary for six distro families</p>
+<p align="center">Clone your running system into a bootable live ISO - one menu-driven C++ binary for five distro families</p>
 
-<p align="center">Standard mode builds a fresh live user - Clone mode keeps your users and /home</p>
+<p align="center">A full system clone - your users, passwords, settings and /home are copied exactly as they are, no live account is added</p>
 
 ---
 
@@ -55,13 +55,13 @@ Detection reads `ID` and `ID_LIKE` from `/etc/os-release`, so derivatives are pi
 
 | Family | Distros | Live initramfs | Status |
 |---|---|---|---|
-| <img src="https://img.shields.io/badge/-Arch-56b6c2?style=flat&logo=arch-linux&logoColor=white" /> **Arch** | Arch, CachyOS, Archcraft, RebornOS | mkinitcpio + archiso | 🧪 **Beta** |
-| <img src="https://img.shields.io/badge/-Arch-56b6c2?style=flat&logo=arch-linux&logoColor=white" /> **Arch (dracut)** | Garuda, EndeavourOS | dracut | 🧪 **Beta** |
-| <img src="https://img.shields.io/badge/-Manjaro-35BF5C?style=flat&logo=manjaro&logoColor=white" /> **Manjaro** | Manjaro, BigLinux, BigCommunity | mkinitcpio + miso | 🧪 **Beta** |
+| <img src="https://img.shields.io/badge/-Arch-56b6c2?style=flat&logo=arch-linux&logoColor=white" /> **Arch** | Arch, CachyOS, Archcraft, RebornOS, Garuda, EndeavourOS | mkinitcpio + claudemods btrfs/ext4 hooks (embedded zip) | 🧪 **Beta** |
 | <img src="https://img.shields.io/badge/-Debian-CE0058?style=flat&logo=debian&logoColor=white" /> **Debian** | Debian, Ubuntu, Mint, Pop, Kali, Devuan, openKylin | initramfs-tools | 🧪 **Beta** |
 | <img src="https://img.shields.io/badge/-Fedora-51A2DA?style=flat&logo=fedora&logoColor=white" /> **Fedora** | Fedora, Nobara | dracut | 🧪 **Beta** |
 | <img src="https://img.shields.io/badge/-openSUSE-73BA25?style=flat&logo=opensuse&logoColor=white" /> **openSUSE** | Tumbleweed, Slowroll, Leap | dracut | 🧪 **Beta** |
 | <img src="https://img.shields.io/badge/-Alpine-0D597F?style=flat&logo=alpine-linux&logoColor=white" /> **Alpine** | Alpine | mkinitfs + custom init | 🧪 **Beta** |
+
+Manjaro and its derivatives (BigLinux, BigCommunity) are not supported.
 
 > **Beta:** all families are implemented but still being tested. Please open an issue with your distro and the log (`/var/log/claudebackup-linux.log`) if a build fails.
 
@@ -70,15 +70,16 @@ Detection reads `ID` and `ID_LIKE` from `/etc/os-release`, so derivatives are pi
 ## ✨ Features
 
 - 🖥️ **Menu-driven terminal app** - red claudemods banner, live clock, disk usage and a `[✓]` setup checklist
-- 🐧 **Six distro families in one binary** - the per-distro boot, initramfs and kernel steps are built in, no extra files to install
+- 🐧 **Five distro families in one binary** - the per-distro boot, initramfs and kernel steps are built in, no extra files to install
 - 🚀 Generate bootable ISOs (BIOS + UEFI hybrid GRUB/ISOLINUX)
+- 📦 **Arch / CachyOS: the claudemods zip method** - the GRUB BIOS/UEFI tree, theme and btrfs/ext4 mkinitcpio hooks from `build-image-arch-img.zip` are embedded in the binary; the system goes into `LiveOS/rootfs.img`
+- 🧩 **Arch: Setup > Install Calamares** - claudemods Calamares packages, config and branding from the embedded zips, with an ext4 or btrfs `compress=zstd:22` choice and the kernel preset set to your running kernel (e.g. `linux-cachyos`)
 - 🔄 Uses bind and overlay mounts to snapshot the running system before compression - no copy of `/` needed
 - 🗜️ SquashFS compression with zstd (levels 1-22), xz or gzip
-- 👤 **Standard mode** builds a clean live user, **Clone mode** keeps your real users, passwords and `/home`
-- 🖱️ Autologin set up for SDDM, LightDM, GDM, MDM, LXDM, SLiM and greetd
+- 👤 **Full system clone** - keeps your real users, passwords and `/home`; no live user is created and nothing is added to the clone
 - 🛠️ Installs the needed tools for your distro from the Setup menu (apt, pacman, dnf, zypper or apk)
 - 🧹 Always unmounts everything it mounted - on success, on failure and on Ctrl-C
-- 📂 Custom exclude list in `/etc/claudebackup-linux/custom.exclude.list` (Docker, Podman, Snap and more by default)
+- 📂 Optional exclude list in `/etc/claudebackup-linux/custom.exclude.list` - empty by default, uncomment lines to leave things out (Docker, Snap, package caches...)
 - 💽 Install ISO to USB with live `dd` progress
 - 📊 Disk usage reporting
 - 🛠️ Launch Calamares from the menu if it is installed
@@ -87,10 +88,10 @@ Detection reads `ID` and `ID_LIKE` from `/etc/os-release`, so derivatives are pi
 ## 📋 Requirements
 
 - Linux system (any of the families above)
-- GCC compiler (C++17 compatible) and `make`
+- GCC compiler (C++17 compatible), `make` and `ld` (binutils - embeds the zips from `dev-release/resources/`)
 - Root privileges (the app re-launches itself through `sudo`)
-- Host tools: `mksquashfs` `xorriso` `mtools` `dosfstools` `curl` `tar` - the **Setup > Install Needed Tools** option installs them for you
-- Internet access once, to download the BIOS/UEFI bootloader files
+- Host tools: `mksquashfs` `xorriso` `mtools` `dosfstools` `curl` `tar` (Arch: `unzip` `mkinitcpio` `device-mapper` `gnupg` instead of `curl`) - the **Setup > Install Needed Tools** option installs them for you
+- Internet access once, to download the BIOS/UEFI bootloader files (not needed on Arch)
 
 ## 💾 Installation
 
@@ -98,7 +99,7 @@ Detection reads `ID` and `ID_LIKE` from `/etc/os-release`, so derivatives are pi
 
 ```bash
 git clone https://github.com/claudemods/claudebackup-linux.git
-cd claudebackup-linux
+cd claudebackup-linux/dev-release
 make
 sudo make install
 ```
@@ -113,14 +114,21 @@ Or run it straight from the build folder with `./claudebackup-linux`.
 
 ## 🧭 Usage
 
-1. **Setup > Install Needed Tools** - installs `squashfs-tools`, `xorriso`, `mtools`, `dosfstools` and `curl` for your distro
-2. **Setup > Download Bootloaders** - one-off download of the BIOS/UEFI boot files
-3. **Setup** - set the ISO name, work and output directories, Standard or Clone mode, compression and live user (all optional, sensible defaults are used)
-4. **Create Bootable ISO** - builds the ISO into your output directory
-5. **Install ISO To USB** or **Launch Calamares** to install
+Use the arrow keys and Enter. The top of every screen shows *Current Configuration*: 🟢 `[✓]` = ready, 🔴 `[ ]` = still to do. The full guide is in the app (**Guide**).
 
-Use the arrow keys and Enter to move around the menu.
+| Step | Menu | What to do |
+|---|---|---|
+| 1 | **Setup → Install Needed Tools** | Installs `squashfs-tools`, `xorriso`, `mtools`, `dosfstools` and `curl` for your distro |
+| 2 | **Setup → Download Bootloaders** | One-off download of the BIOS/UEFI boot files (needs internet) |
+| 3 | **Setup → ISO Name / Work Directory / Output Directory** | Optional - blank ISO name is generated for you, blank output directory uses the work directory |
+| 4 | **Setup → Compression / Level** | `zstd` (levels 1-22, default 3), `xz` or `gzip` - higher level = smaller but slower |
+| 5 | **Setup → RAM Mode** | Optional `toram` boot entry (`copytoram=y` on Arch) |
+| 6 | **Setup → Install Calamares** *(Arch)* | Ext4 or btrfs zstd:22 - run before building so the ISO contains it |
+| 7 | **Detected System And Build Steps** | Check your distro and family say *Support: yes* and see every step that will run |
+| 8 | **Create Bootable ISO** | Mount → bootloaders → EFI image → boot menus → initramfs → kernel → squashfs → xorriso (Arch: mount → claudemods ISO tree → kernels.cfg → initramfs → kernel → LiveOS/rootfs.img → xorriso). Your system is cloned as it is. Everything is unmounted at the end, even on failure or Ctrl+C |
+| 9 | **Install ISO To USB** / **Launch Calamares** | Write the ISO to a drive (erases it!) or install from the live session. Test in a VM (UEFI) first |
 
+If a build fails the message names the step - details are in `/var/log/claudebackup-linux.log`.
 ## 📁 Files
 
 | Path | Purpose |
