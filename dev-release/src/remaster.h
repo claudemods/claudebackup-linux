@@ -14,6 +14,7 @@ struct RemasterOptions {
     std::string stopAfter;
     std::string isoTag;               // Arch volume label, empty = 2026
     std::string cloneDir;             // bind point for "/", empty = workDir/clone_system_temp
+    std::string imageFormat;          // Arch: squashfs | erofs, empty = squashfs
     int level = 0;
     int ramMode = -1;                 // -1 = default, 0/1 = override
 };
@@ -37,6 +38,7 @@ inline Context makeContext(const RemasterOptions& o) {
     if (!o.algo.empty()) c.settings.compressionAlgo = o.algo;
     if (o.level > 0) c.settings.compressionLevel = o.level;
     if (o.ramMode >= 0) c.settings.ramMode = (o.ramMode == 1);
+    if (o.imageFormat == "erofs" && c.distro.family == "archlinux") c.settings.imageFormat = "erofs";
     c.ramModeEnabled = c.settings.ramMode;
     c.isGitHubAction = isDirectory("/home/runner/work");
     c.stopAfter = o.stopAfter;
@@ -75,7 +77,7 @@ inline std::vector<std::string> missingTools(const Distro& d) {
 
 inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "debian")   return "apt-get install -y squashfs-tools xorriso mtools dosfstools curl live-boot live-boot-initramfs-tools";
-    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
+    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools erofs-utils libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
@@ -94,7 +96,7 @@ inline bool prepareBootFiles(const Distro& d) {
 
 // Arch only: installs Calamares from the embedded calamares-files.zip + claudemods.zip
 // (cmiadvanced extrainstalls.sh). Runs on the host, so the next ISO contains it.
-inline bool installCalamares(const Distro& d, bool btrfs) {
+inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
     if (d.family != "archlinux") { logError("Calamares setup is only available for the Arch family."); return false; }
     if (!commandExists("unzip")) { logError("unzip is not installed (use Setup > Install Needed Tools)"); return false; }
 
@@ -102,7 +104,7 @@ inline bool installCalamares(const Distro& d, bool btrfs) {
     runCommand("rm -rf " + shq(dir));
     bool ok = resources::extract(resources::Zip::CalamaresFiles, dir) &&
               resources::extract(resources::Zip::Claudemods, dir + "/calamares-files");
-    if (ok) ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0"}) == 0;
+    if (ok) ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0", erofs ? "1" : "0"}) == 0;
     runCommand("rm -rf " + shq(dir));
     return ok;
 }

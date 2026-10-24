@@ -102,7 +102,7 @@ inline std::vector<Step> build(const Context& c) {
     }});
 
     // 16. Squashfs
-    steps.push_back({"mksquashfs", baseName(families::squashfsDest(c)) + " compression", [&c]() {
+    steps.push_back({"mksquashfs", baseName(families::squashfsDest(c)) + (c.settings.imageFormat == "erofs" ? " (erofs)" : "") + " compression", [&c]() {
         return native::runMksquashfs(c, families::squashfsDest(c));
     }});
 

@@ -9,6 +9,7 @@ struct Settings {
     std::string compressionAlgo = "zstd";
     int compressionLevel = 3;
     bool ramMode = true;
+    std::string imageFormat = "squashfs";   // Arch only: squashfs | erofs
 };
 
 #endif

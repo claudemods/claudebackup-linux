@@ -235,12 +235,14 @@ echo "Menus generated."
 )CDB";
 
 // Arch: Calamares from the claudemods zips (port of cmiadvanced extrainstalls.sh).
-// $1 = extracted calamares-files parent dir, $2 = 1 for btrfs zstd:22 mount options
+// $1 = extracted calamares-files parent dir, $2 = 1 for btrfs zstd:22 mount options,
+// $3 = 1 when the ISO image is erofs (unpackfs sourcefs: erofs)
 inline const char* CALAMARES_SETUP = R"CDB(#!/bin/bash
 set -e
 
 SRC="$1/calamares-files"
 BTRFS="${2:-0}"
+EROFS="${3:-0}"
 cd "$SRC"
 
 echo "-> Installing Calamares packages..."
@@ -261,6 +263,13 @@ if [ "$BTRFS" = "1" ]; then
     cp -f mount.conf /usr/share/calamares/modules/
 else
     echo "-> Using the default mount configuration (ext4 / plain btrfs)."
+fi
+
+if [ "$EROFS" = "1" ]; then
+    echo "-> Applying Erofs Cloned System Image configuration..."
+    cp -r erofs/* /
+else
+    echo "-> Using Default Cloned Squashfs System."
 fi
 
 rm -f /usr/share/applications/calamares.desktop

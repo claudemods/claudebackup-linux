@@ -32,6 +32,7 @@ struct MenuConfig {
     bool ramMode = true;
     std::string isoTag;        // Arch volume label, empty = 2026
     std::string cloneDir;      // <parent>/clone_system_temp, "/" is bound here; empty = default
+    std::string imageFormat = "squashfs";   // Arch only: squashfs | erofs
 };
 MenuConfig mcfg;
 
@@ -52,6 +53,7 @@ void saveConfig() {
     f << "ramMode=" << (mcfg.ramMode ? "1" : "0") << "\n";
     f << "isoTag=" << mcfg.isoTag << "\n";
     f << "cloneDir=" << mcfg.cloneDir << "\n";
+    f << "imageFormat=" << mcfg.imageFormat << "\n";
 }
 
 void loadConfig() {
@@ -67,6 +69,7 @@ void loadConfig() {
         else if (k == "ramMode") mcfg.ramMode = (v == "1");
         else if (k == "isoTag") mcfg.isoTag = v;
         else if (k == "cloneDir") mcfg.cloneDir = v;
+        else if (k == "imageFormat") mcfg.imageFormat = (v == "erofs") ? "erofs" : "squashfs";
     }
 }
 
@@ -80,6 +83,7 @@ RemasterOptions currentOptions() {
     o.ramMode = mcfg.ramMode ? 1 : 0;
     o.isoTag = mcfg.isoTag;
     o.cloneDir = mcfg.cloneDir.empty() ? defaultCloneDir() : mcfg.cloneDir;
+    o.imageFormat = mcfg.imageFormat;
     return o;
 }
 
@@ -179,6 +183,7 @@ std::string statusBlock() {
     s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
     if (d.family == "archlinux") {
         s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
+        s += checkLine(true, "Image Format: " + mcfg.imageFormat + (mcfg.imageFormat == "erofs" ? " (mkfs.erofs zstd)" : ""));
         s += checkLine(commandExists("calamares"), "Calamares");
     }
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
@@ -291,15 +296,18 @@ void showGuide() {
         "Every box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n"
         "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
         "                                     plus your distro's live-boot packages\n"
-        "                                     (Arch: unzip, mkinitcpio, device-mapper, gnupg)\n"
+        "                                     (Arch: unzip, erofs-utils, mkinitcpio, device-mapper, gnupg)\n"
         "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
         "                                     (Arch: not needed, the claudemods zip is built in)\n"
         "3. Setup > ISO Name, Work Directory, Output Directory, Clone Directory\n"
         "     ISO name blank = auto. Output directory blank = the work directory.\n"
         "     Clone directory: parent folder, the system is bound at <parent>/clone_system_temp.\n"
         "4. Setup > Compression and Level     zstd (1-22, default 3), xz or gzip\n"
+        "   Setup > Image Format (Arch)       squashfs, or erofs (mkfs.erofs -zzstd -C 65536\n"
+        "                                     --chunksize 65536, kernel 6.10+ for erofs zstd)\n"
         "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
-        "6. Setup > Install Calamares (Arch)  claudemods Calamares, ext4 or btrfs zstd:22;\n"
+        "6. Setup > Install Calamares (Arch)  claudemods Calamares, ext4 or btrfs zstd:22,\n"
+        "                                     squashfs or erofs image (match Image Format);\n"
         "                                     do this BEFORE building so the ISO contains it\n"
         "7. Detected System And Build Steps   check your distro says 'Support: yes'\n"
         "8. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
@@ -402,6 +410,7 @@ void showSetupMenu() {
         "Set Compression Level",
         "Toggle RAM Mode Boot Entry",
         "Set ISO Tag (Arch volume label, default 2026)",
+        "Set Image Format (Arch: squashfs / erofs)",
         "Install Calamares (Arch: ext4 / btrfs zstd:22)",
         "Back to Main Menu"
     };
@@ -467,6 +476,19 @@ void showSetupMenu() {
                 break;
             }
             case 10: {
+                if (detectDistro().family != "archlinux") {
+                    std::cout << COLOR_RED << "Only the Arch family can build an erofs image; other distros use squashfs." << COLOR_RESET << std::endl;
+                    pressAnyKey();
+                    break;
+                }
+                std::cout << COLOR_GREEN << "Choose the system image type:\n"
+                          << "1) Squashfs (mksquashfs, Setup > Compression and Level)\n"
+                          << "2) Erofs (mkfs.erofs -zzstd -C 65536 --chunksize 65536)" << COLOR_RESET << std::endl;
+                std::string f = getUserInput("Enter your choice (1 or 2): ");
+                if (f == "1" || f == "2") { mcfg.imageFormat = (f == "2") ? "erofs" : "squashfs"; saveConfig(); }
+                break;
+            }
+            case 11: {
                 Distro d = detectDistro();
                 if (d.family != "archlinux") {
                     std::cout << COLOR_RED << "Calamares setup is only available for the Arch family." << COLOR_RESET << std::endl;
@@ -477,12 +499,18 @@ void showSetupMenu() {
                           << "1) Default configuration (Ext4)\n"
                           << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
                 bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
-                if (remaster::installCalamares(d, btrfs)) logSuccess("Calamares installation and configuration completed!");
+                std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
+                          << "1) Default Cloned Squashfs System\n"
+                          << "2) Erofs Cloned System Image\n"
+                          << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
+                std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
+                bool erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
+                if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
                 else logError("Calamares setup failed.");
                 pressAnyKey();
                 break;
             }
-            case 11: return;
+            case 12: return;
         }
     }
 }

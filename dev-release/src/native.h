@@ -314,7 +314,61 @@ inline bool unbindRoot(const std::string& dir) {
     return umountPath(dir);
 }
 
+// ---------------------------------------------------------------------------
+// mkfs.erofs (Arch, image format erofs): KDE Linux build.sh rootfs command, fed from the bound
+// clone directory. The mksquashfs exclude list is turned into erofs exclude rules.
+// ---------------------------------------------------------------------------
+inline std::string globToRegex(const std::string& g) {
+    std::string r = "^";
+    for (char ch : g) {
+        switch (ch) {
+            case '*': r += "[^/]*"; break;
+            case '?': r += "[^/]"; break;
+            case '.': case '^': case '$': case '+': case '(': case ')':
+            case '{': case '}': case '|': case '\\': r += '\\'; r += ch; break;
+            default: r += ch;
+        }
+    }
+    return r + "$";
+}
+
+// Rules match paths relative to the source tree without a leading slash (e.g. "etc/fstab")
+inline std::string erofsExcludeArgs(const Context& c) {
+    std::string out;
+    for (const auto& l : splitLines(readFile(c.excludeList))) {
+        std::string e = trim(l);
+        if (e.empty()) continue;
+        if (e == "mnt" || e == "media")   // keep the empty mount points (mksquashfs recreates them with -p)
+            out += " --exclude-regex=" + shq("^" + e + "/.+");
+        else if (e.find_first_of("*?[") != std::string::npos)
+            out += " --exclude-regex=" + shq(globToRegex(e));
+        else
+            out += " --exclude-path=" + shq(e);
+    }
+    return out;
+}
+
+inline bool runMkerofs(const Context& c, const std::string& dest) {
+    if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (use Setup > Install Needed Tools)"); return false; }
+
+    mkdirP(dirName(dest));
+    unlink(dest.c_str());
+    const std::string src = cloneDir(c);
+    if (!bindRoot(src)) return false;
+
+    std::string cmd = "mkfs.erofs -zzstd -C 65536 --chunksize 65536 -T" + std::to_string((long long)time(nullptr)) +
+        " --ignore-mtime" + erofsExcludeArgs(c) + " " + shq(dest) + " " + shq(src);
+
+    logNormal("Running: " + cmd);
+    bool ok = runCommand(cmd) == 0;
+    logNormal("Unmounting bind mount...");
+    if (!unbindRoot(src)) ok = false;
+    return ok;
+}
+
 inline bool runMksquashfs(const Context& c, const std::string& dest) {
+    if (c.distro.family == "archlinux" && c.settings.imageFormat == "erofs") return runMkerofs(c, dest);
+
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
     int lvl = c.settings.compressionLevel > 0 ? c.settings.compressionLevel : 3;
     unsigned procs = std::thread::hardware_concurrency();
