@@ -54,22 +54,49 @@ inline Context makeContext(const RemasterOptions& o) {
     return c;
 }
 
-// Host tools the pipeline shells out to
-inline std::vector<std::string> missingTools() {
+// Host tools the pipeline shells out to (Arch unzips its embedded boot files instead of
+// downloading bootloaders with curl)
+inline std::vector<std::string> missingTools(const Distro& d) {
     std::vector<std::string> missing;
-    for (const char* t : {"mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "curl", "tar"})
+    for (const char* t : {"mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "tar"})
         if (!commandExists(t)) missing.push_back(t);
+    const char* extra = d.family == "archlinux" ? "unzip" : "curl";
+    if (!commandExists(extra)) missing.push_back(extra);
     return missing;
 }
 
 inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "debian")   return "apt-get install -y squashfs-tools xorriso mtools dosfstools curl live-boot live-boot-initramfs-tools";
-    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools curl archiso mkinitcpio-archiso mkinitcpio-nfs-utils";
-    if (d.family == "manjaro")  return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools curl mkinitcpio-nfs-utils manjaro-tools-iso";
+    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
     return "";
+}
+
+// Boot files for the build: the embedded claudemods zip on Arch, downloaded bootloaders otherwise
+inline bool bootFilesReady(const Distro& d) {
+    return d.family == "archlinux" || pathExists(STAGING_DIR + "/bootloaders/.download-complete");
+}
+
+inline bool prepareBootFiles(const Distro& d) {
+    if (d.family == "archlinux") return native::ensureArchFiles();
+    return native::ensureBootloaders();
+}
+
+// Arch only: installs Calamares from the embedded calamares-files.zip + claudemods.zip
+// (cmiadvanced extrainstalls.sh). Runs on the host, so the next ISO contains it.
+inline bool installCalamares(const Distro& d, bool btrfs) {
+    if (d.family != "archlinux") { logError("Calamares setup is only available for the Arch family."); return false; }
+    if (!commandExists("unzip")) { logError("unzip is not installed (use Setup > Install Needed Tools)"); return false; }
+
+    const std::string dir = STAGING_DIR + "/calamares";
+    runCommand("rm -rf " + shq(dir));
+    bool ok = resources::extract(resources::Zip::CalamaresFiles, dir) &&
+              resources::extract(resources::Zip::Claudemods, dir + "/calamares-files");
+    if (ok) ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0"}) == 0;
+    runCommand("rm -rf " + shq(dir));
+    return ok;
 }
 
 // Runs the whole plan. Returns true when the ISO was built (or the breakpoint was reached).
@@ -82,7 +109,7 @@ inline bool run(const RemasterOptions& opts) {
     logNormal("Distro: " + c.distro.prettyName + " (family: " + c.distro.family + ")");
     if (!c.distro.supported()) { logError("Distro '" + c.distro.distroID + "' is not mapped to a supported family."); return false; }
 
-    auto missing = missingTools();
+    auto missing = missingTools(c.distro);
     if (!missing.empty()) {
         std::string list;
         for (const auto& m : missing) list += m + " ";
@@ -100,7 +127,7 @@ inline bool run(const RemasterOptions& opts) {
     mkdirP(c.workDir);
     mkdirP(c.isoDir);
 
-    if (!native::ensureBootloaders()) { logError("Failed to download bootloaders."); return false; }
+    if (!prepareBootFiles(c.distro)) { logError("Failed to prepare the boot files."); return false; }
     logNormal("Generating exclude list...");
     c.excludeList = native::generateExcludeList(c);
 

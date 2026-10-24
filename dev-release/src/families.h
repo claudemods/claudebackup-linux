@@ -9,11 +9,22 @@
 //   initramfsCmd     builds /boot/cdb-initrd.img inside the chroot
 //   copyKernelCmd    copies kernel + initrd into isodir/live
 //   hookSquashfsCmd  extra layout the distro's live initramfs expects
+//
+// The Arch family instead uses the claudemods zip method (ported from cmiadvanced): the ISO tree
+// and mkinitcpio hooks come from the embedded build-image-arch-img.zip, the image is
+// LiveOS/rootfs.img and GRUB boots it with label=<volume label>.
 
 namespace families {
 
-inline bool isDracutArch(const Context& c) {
-    return c.distro.distroID == "garuda" || c.distro.distroID == "endeavouros";
+inline bool isArch(const Context& c) { return c.distro.family == "archlinux"; }
+
+// Where the extracted build-image-arch-img.zip lives (native::ensureArchFiles)
+inline std::string archZipDir() { return STAGING_DIR + "/arch"; }
+
+// Path of the compressed root filesystem inside the ISO tree
+inline std::string squashfsDest(const Context& c) {
+    if (isArch(c)) return c.isoDir + "/LiveOS/rootfs.img";
+    return c.isoDir + "/live/filesystem.squashfs";
 }
 
 // ---------------------------------------------------------------------------
@@ -23,13 +34,8 @@ inline std::string bootParams(const Context& c) {
     const std::string& f = c.distro.family;
     if (f == "debian")
         return "boot=live components cow_spacesize=2G";
-    if (f == "archlinux" || f == "manjaro") {
-        if (isDracutArch(c))
-            return "root=live:CDLABEL=" + LIVE_LABEL + " rd.live.image rd.live.dir=arch/x86_64 rd.live.squashimg=airootfs.sfs rd.live.overlay.size=2048 quiet";
-        if (f == "manjaro")
-            return "misobasedir=manjaro misolabel=" + LIVE_LABEL + " cow_spacesize=2G";
-        return "archisobasedir=arch archisolabel=" + LIVE_LABEL + " cow_spacesize=2G";
-    }
+    if (f == "archlinux")
+        return "label=" + LIVE_LABEL;
     if (f == "fedora" || f == "opensuse")
         return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.shell rd.debug selinux=0 cow_spacesize=2G";
     if (f == "alpine")
@@ -76,77 +82,133 @@ fi
 )CDB";
 }
 
-inline std::string initramfsArch(const Context& c) {
-    std::string s = R"CDB(#!/bin/bash
+// Arch (host side, before the chroot): stage the zip's mkinitcpio.conf, 11-dm-initramfs.rules and
+// working-hooks-btrfs-ext4 hooks on the liveroot tmpfs (/tmp is never cloned), pointing the hooks
+// at the staged files instead of /etc/initcpio and /usr/lib/initcpio/udev.
+inline std::string initramfsPrepArch(const Context& c) {
+    return "set -e\nSRC=" + shq(archZipDir()) + "\nDEST=" + shq(c.liveRoot + "/tmp/cdb-initcpio") + "\n" + R"CDB(
+if [ ! -d "$SRC/working-hooks-btrfs-ext4" ] || [ ! -f "$SRC/build-image-arch-img/mkinitcpio.conf" ]; then
+    echo "[FATAL ERROR] the embedded Arch files were not extracted to $SRC!"
+    exit 1
+fi
+echo "-> Staging the claudemods mkinitcpio hooks..."
+rm -rf "$DEST"
+mkdir -p "$DEST"
+cp -a "$SRC/working-hooks-btrfs-ext4/." "$DEST/"
+cp -f "$SRC/build-image-arch-img/mkinitcpio.conf" "$SRC/build-image-arch-img/11-dm-initramfs.rules" "$DEST/"
+sed -i 's|/usr/lib/initcpio/udev/11-dm-initramfs.rules|/tmp/cdb-initcpio/11-dm-initramfs.rules|' "$DEST/install/arch"
+sed -i 's|/etc/initcpio/arch_shutdown|/tmp/cdb-initcpio/arch_shutdown|' "$DEST/install/arch_shutdown"
+)CDB";
+}
+
+inline std::string initramfsArch() {
+    return R"CDB(#!/bin/bash
 set -e
 
-echo "-> Preparing Initramfs configuration for Live (Arch Family)..."
+echo "-> Preparing Initramfs configuration for Live (Arch Family, claudemods hooks)..."
 
 KERNEL_VERSION=$(uname -r)
 if [ ! -d "/lib/modules/$KERNEL_VERSION" ]; then
     # Fall back if uname -r doesn't match an installed kernel (e.g. an unrebooted upgrade)
     KERNEL_VERSION=$(ls -1 /lib/modules | grep -E '^[0-9]' | head -n 1)
 fi
-)CDB";
 
-    if (isDracutArch(c)) {
-        s += R"CDB(
-# Garuda / EndeavourOS branch (dracut)
-echo "-> Garuda/EndeavourOS detected: generating live initramfs via dracut"
-if ! command -v dracut > /dev/null 2>&1; then
-    echo "[FATAL ERROR] dracut is not installed (sudo pacman -S dracut)."
+HOOKS_DIR=/tmp/cdb-initcpio
+if [ ! -f "$HOOKS_DIR/mkinitcpio.conf" ]; then
+    echo "[FATAL ERROR] staged hooks not found in $HOOKS_DIR!"
     exit 1
 fi
-# -N disables host-only mode (crucial for live environments)
-dracut -N -f --add "dmsquash-live" --add-drivers "sr_mod iso9660 squashfs loop overlay" --kver "$KERNEL_VERSION" "/boot/cdb-initrd.img"
-)CDB";
-        return s;
-    }
+if ! command -v mkinitcpio > /dev/null 2>&1; then
+    echo "[FATAL ERROR] mkinitcpio is not installed (sudo pacman -S mkinitcpio)."
+    exit 1
+fi
 
-    s += R"CDB(
-# Arch / Manjaro branch (mkinitcpio)
-cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
+# Drop-ins would override the live config: park them for the build, put them back on exit
 mkdir -p /etc/mkinitcpio.conf.d.bak /usr/lib/mkinitcpio.conf.d.bak
 [ "$(ls -A /etc/mkinitcpio.conf.d/ 2>/dev/null)" ] && mv /etc/mkinitcpio.conf.d/*.conf /etc/mkinitcpio.conf.d.bak/
 [ "$(ls -A /usr/lib/mkinitcpio.conf.d/ 2>/dev/null)" ] && mv /usr/lib/mkinitcpio.conf.d/*.conf /usr/lib/mkinitcpio.conf.d.bak/
 
 trap '
-mv /etc/mkinitcpio.conf.bak /etc/mkinitcpio.conf
 [ "$(ls -A /etc/mkinitcpio.conf.d.bak/ 2>/dev/null)" ] && mv /etc/mkinitcpio.conf.d.bak/*.conf /etc/mkinitcpio.conf.d/
 [ "$(ls -A /usr/lib/mkinitcpio.conf.d.bak/ 2>/dev/null)" ] && mv /usr/lib/mkinitcpio.conf.d.bak/*.conf /usr/lib/mkinitcpio.conf.d/
-rm -rf /etc/mkinitcpio.conf.d.bak /usr/lib/mkinitcpio.conf.d.bak
+rm -rf /etc/mkinitcpio.conf.d.bak /usr/lib/mkinitcpio.conf.d.bak "$HOOKS_DIR"
 ' EXIT
-)CDB";
 
-    if (c.distro.family == "manjaro") {
-        s += R"CDB(
-if ! pacman -Qq manjaro-tools-iso > /dev/null 2>&1; then
-    echo "[FATAL ERROR] manjaro-tools-iso is not installed (sudo pacman -S manjaro-tools-iso)."
-    exit 1
-fi
-cat << 'EOF' > /etc/mkinitcpio.conf
-MODULES=(loop dm-snapshot btrfs sr_mod isofs)
-HOOKS=(base udev microcode modconf kms miso miso_loop_mnt block keyboard keymap consolefont filesystems)
-COMPRESSION="zstd"
-EOF
-)CDB";
-    } else {
-        s += R"CDB(
-if ! pacman -Qq mkinitcpio-archiso > /dev/null 2>&1; then
-    echo "[FATAL ERROR] mkinitcpio-archiso is not installed (sudo pacman -S archiso mkinitcpio-archiso)."
-    exit 1
-fi
-cat << 'EOF' > /etc/mkinitcpio.conf
-MODULES=(loop dm-snapshot btrfs sr_mod isofs)
-HOOKS=(base udev microcode modconf kms archiso archiso_loop_mnt block filesystems keyboard keymap consolefont)
-COMPRESSION="zstd"
-EOF
-)CDB";
-    }
-
-    s += R"CDB(
+# HOOKS=(base udev arch_shutdown arch arch_loop_mnt arch_kms modconf block filesystems keyboard keymap)
 echo "-> Generating unique live initramfs for kernel $KERNEL_VERSION..."
-mkinitcpio -c /etc/mkinitcpio.conf -k "$KERNEL_VERSION" -g "/boot/cdb-initrd.img"
+mkinitcpio -c "$HOOKS_DIR/mkinitcpio.conf" -D "$HOOKS_DIR" -D /etc/initcpio -D /usr/lib/initcpio \
+    -k "$KERNEL_VERSION" -g "/boot/cdb-initrd.img"
+)CDB";
+}
+
+// Arch: copies the zip's ISO tree (GRUB i386-pc/x86_64-efi, efi.img, theme, memtest, ucode) into
+// isodir. The host's microcode images are used when installed, they are newer than the zip's.
+inline std::string archBootFilesCmd(const Context& c) {
+    return "set -e\nSRC=" + shq(archZipDir() + "/build-image-arch-img") + "\nISODIR=" + shq(c.isoDir) + "\n" + R"CDB(
+if [ ! -f "$SRC/boot/efi.img" ] || [ ! -f "$SRC/boot/grub/i386-pc/eltorito.img" ]; then
+    echo "[FATAL ERROR] the embedded Arch ISO tree is incomplete in $SRC!"
+    exit 1
+fi
+echo "-> Copying the claudemods ISO tree into $ISODIR..."
+mkdir -p "$ISODIR"
+cp -a "$SRC/." "$ISODIR/"
+# build-time files only, xorriso writes its own boot.catalog
+rm -f "$ISODIR/mkinitcpio.conf" "$ISODIR/11-dm-initramfs.rules" "$ISODIR/boot.catalog" \
+      "$ISODIR/boot/grub/themes/claudemods/background.png~"
+mkdir -p "$ISODIR/LiveOS"
+for u in intel-ucode.img amd-ucode.img; do
+    if [ -f "/boot/$u" ]; then cp -f "/boot/$u" "$ISODIR/boot/$u"; fi
+done
+echo "-> ISO tree ready."
+)CDB";
+}
+
+// Arch: boot/grub/kernels.cfg (sourced by the zip's grub.cfg). GRUB passes "$title" as $2, so
+// "linux /boot/vmlinuz-$2" expands to /boot/vmlinuz-x86_64 <options> label=<volume label>.
+inline std::string archKernelsCfg(const Context& c) {
+    std::string name = replaceAll(c.distro.prettyName, "\"", "");
+    std::string s =
+        "if cpuid -l; then\n"
+        "    havekernel=\"Y\"\n"
+        "    title=\"\"\n"
+        "    for kopt in x86_64 $kopts " + bootParams(c) + "; do\n"
+        "        if [ -n \"$title\" ] ; then\n"
+        "            title=\"$title $kopt\";\n"
+        "        else\n"
+        "            title=\"$kopt\";\n"
+        "        fi;\n"
+        "    done\n";
+    auto entry = [&](const std::string& label, const std::string& extra) {
+        return "    menuentry \"" + label + "\" --class=arch.x86.64 \"$title" + extra + "\" {# set arguments above with the editor\n"
+               "        linux /boot/vmlinuz-$2\n"
+               "        initrd /boot/intel-ucode.img /boot/amd-ucode.img /boot/initramfs-x86_64.img\n"
+               "    }\n";
+    };
+    s += entry("From CD/DVD/ISO: Boot " + name, "");
+    s += entry("From Stick/HDD: Boot " + name, "");
+    if (c.ramModeEnabled) s += entry("Boot " + name + " - RAM mode", " copytoram=y");
+    s += R"CDB(fi
+if [ "${havekernel}" != "Y" ]; then
+    menuentry --class=find.none "NO SUITABLE KERNELS AVAILABLE" {echo $@  echo "There are no kernels suitable for this machine available."
+        echo ""
+        if ! cpuid -l; then
+            echo "This machine is NOT 64bit capable."
+            for kk in /boot/vmlinu*x86_64; do
+                if [ "$kk" != "/boot/vmlinu*x86_64" ]; then
+                    have32="true"
+                fi
+            done
+            if [ "${have32}" != "true" ]; then
+                echo "There are no 32bit kernels available"
+                echo "It appears you are trying to boot a 64bit release on a 32bit machine"
+                echo "This cannot work!"
+            fi
+        fi
+        echo "Press Escape to return to the main menu"
+        sleep --interruptible 9999
+        menu_reload
+    }
+fi
 )CDB";
     return s;
 }
@@ -259,10 +321,16 @@ echo "-> alpine initramfs completed."
 inline std::string initramfsCmd(const Context& c) {
     const std::string& f = c.distro.family;
     if (f == "debian")   return initramfsDebian();
-    if (f == "archlinux" || f == "manjaro") return initramfsArch(c);
+    if (f == "archlinux") return initramfsArch();
     if (f == "fedora")   return initramfsFedora();
     if (f == "opensuse") return initramfsOpensuse();
     if (f == "alpine")   return initramfsAlpine();
+    return "";
+}
+
+// Host-side preparation run before initramfsCmd (empty = nothing to do)
+inline std::string initramfsPrepCmd(const Context& c) {
+    if (isArch(c)) return initramfsPrepArch(c);
     return "";
 }
 
@@ -314,7 +382,7 @@ cp "$INITRD_SRC" "$ISODIR/live/initrd.img"
 rm -f "$LIVEROOT/boot/cdb-initrd.img"
 echo "-> Copy completed."
 )CDB";
-    } else if (f == "archlinux" || f == "manjaro") {
+    } else if (f == "archlinux") {
         s += R"CDB(
 KERNEL_VERSION=$(uname -r)
 KVER_MAJOR_MINOR=$(echo "$KERNEL_VERSION" | cut -d. -f1,2)
@@ -345,15 +413,15 @@ if [ -z "$KERNEL_SRC" ] || [ ! -f "$KERNEL_SRC" ]; then
 fi
 
 echo "-> Copying from: $KERNEL_SRC"
-mkdir -p "$ISODIR/live"
-cp "$KERNEL_SRC" "$ISODIR/live/vmlinuz"
+mkdir -p "$ISODIR/boot"
+cp "$KERNEL_SRC" "$ISODIR/boot/vmlinuz-x86_64"
 
 if [ ! -f "$LIVEROOT/boot/cdb-initrd.img" ]; then
     echo "[FATAL ERROR] cdb-initrd.img not found in $LIVEROOT/boot!"
     exit 1
 fi
 echo "-> Copying cdb-initrd.img..."
-cp "$LIVEROOT/boot/cdb-initrd.img" "$ISODIR/live/initrd.img"
+cp "$LIVEROOT/boot/cdb-initrd.img" "$ISODIR/boot/initramfs-x86_64.img"
 
 rm -f "$LIVEROOT/boot/initramfs-cdb-initrd.img"
 rm -f "$LIVEROOT/boot/cdb-initrd.img"
@@ -403,14 +471,11 @@ inline std::string hookSquashfsCmd(const Context& c) {
 
     std::string wait = "timeout=10\nwhile [ ! -f " + sq + " ] && [ $timeout -gt 0 ]; do\n    sleep 1; timeout=$((timeout-1))\ndone\n";
 
-    if (f == "archlinux" || f == "manjaro") {
-        std::string s = "set -e\necho \"-> Preparing filesystem.squashfs hardlink...\"\n" + wait +
-            "if [ ! -f " + sq + " ]; then\n    echo \"[FATAL ERROR] filesystem.squashfs not found after timeout!\"\n    exit 1\nfi\n";
-        if (f == "manjaro")
-            s += "mkdir -p " + iso + "/manjaro/x86_64\nln -f " + sq + " " + iso + "/manjaro/x86_64/livefs.sfs\n";
-        else
-            s += "mkdir -p " + iso + "/arch/x86_64\nln -f " + sq + " " + iso + "/arch/x86_64/airootfs.sfs\n";
-        return s;
+    if (f == "archlinux") {
+        // mksquashfs already wrote LiveOS/rootfs.img; add its checksum like cmiadvanced did
+        return "set -e\ncd " + shq(c.isoDir + "/LiveOS") + "\n"
+               "echo \"-> Writing rootfs.img.sha512...\"\n"
+               "sha512sum rootfs.img > rootfs.img.sha512\n";
     }
     if (f == "fedora")
         return "set -e\nmkdir -p " + iso + "/LiveOS\n" + wait + "ln -f " + sq + " " + iso + "/LiveOS/squashfs.img\n";

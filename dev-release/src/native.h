@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <sys/mount.h>
 #include "context.h"
+#include "resources.h"
 
 // Native replacements for the penguins-eggs "oa" C engine (mount bootstrap, eternit umount) and the Go worker modules (shell, mksquashfs, xorriso). Everything that
 // used to be forked as a bash script or a second binary runs in-process here.
@@ -287,14 +288,13 @@ inline std::string squashfsCompressionArgs(const std::string& algo, const std::s
     return "-comp " + algo;
 }
 
-inline bool runMksquashfs(const Context& c) {
+inline bool runMksquashfs(const Context& c, const std::string& dest) {
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
     int lvl = c.settings.compressionLevel > 0 ? c.settings.compressionLevel : 3;
     unsigned procs = std::thread::hardware_concurrency();
     if (procs == 0) procs = 1;
 
-    std::string dest = c.isoDir + "/live/filesystem.squashfs";
-    mkdirP(c.isoDir + "/live");
+    mkdirP(dirName(dest));
 
     std::string cmd = "mksquashfs " + shq(c.liveRoot) + " " + shq(dest) +
         " -b 1M -processors " + std::to_string(procs) + " -noappend -progress -wildcards" +
@@ -323,8 +323,38 @@ inline void writeDotDisk(const Context& c) {
         "# claudebackup linux " + APP_VERSION + "\n\nVolinfo: " + iso + "\nImage created at: " + ts + "\n");
 }
 
+// Arch: GRUB hybrid layout of the claudemods zip tree (cmiadvanced createISO)
+inline bool runXorrisoArch(const Context& c) {
+    const std::string mbr = c.isoDir + "/boot/grub/i386-pc/boot_hybrid.img";
+    const std::string efiImg = c.isoDir + "/boot/efi.img";
+    if (!isRegularFile(mbr) || !isRegularFile(efiImg)) { logError("xorriso: GRUB boot images missing from " + c.isoDir); return false; }
+
+    std::string cmd = "xorriso -as mkisofs"
+        " --modification-date=\"$(date +%Y%m%d%H%M%S00)\""
+        " --protective-msdos-label"
+        " -volid " + shq(LIVE_LABEL) +
+        " -appid 'claudemods Linux Live/Rescue CD'"
+        " -publisher 'claudemods claudemods101@gmail.com'"
+        " -preparer " + shq(APP_NAME + " " + APP_VERSION) +
+        " -r -graft-points -no-pad"
+        " --sort-weight 0 / --sort-weight 1 /boot"
+        " --grub2-mbr " + shq(mbr) +
+        " -partition_offset 16"
+        " -b boot/grub/i386-pc/eltorito.img -c boot.catalog"
+        " -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info"
+        " -eltorito-alt-boot"
+        " -append_partition 2 0xef " + shq(efiImg) +
+        " -e --interval:appended_partition_2:all:: -no-emul-boot"
+        " -iso-level 3"
+        " -o " + shq(c.isoPath) + " " + shq(c.isoDir);
+
+    logNormal("Generating ISO (Hybrid BIOS/UEFI GRUB, claudemods tree): " + c.isoPath);
+    return runCommand(cmd) == 0;
+}
+
 inline bool runXorriso(const Context& c) {
     if (!isDirectory(c.isoDir)) { logError("xorriso: source directory '" + c.isoDir + "' does not exist"); return false; }
+    if (c.distro.family == "archlinux") return runXorrisoArch(c);
 
     const std::string isolinuxBin = "isolinux/isolinux.bin";
     const std::string isolinuxCat = "isolinux/boot.cat";
@@ -365,6 +395,20 @@ inline bool ensureBootloaders() {
         return false;
     }
     return writeFile(dir + "/.download-complete", "ok\n");
+}
+
+// Arch: unpacks the embedded build-image-arch-img.zip (ISO tree + hooks) to STAGING_DIR/arch.
+// Extracted fresh every time so a rebuilt binary never uses stale files.
+inline bool ensureArchFiles() {
+    const std::string dir = STAGING_DIR + "/arch";
+    if (!commandExists("unzip")) { logError("unzip is not installed (use Setup > Install Needed Tools)"); return false; }
+    logNormal("Extracting the embedded Arch boot files...");
+    runCommand("rm -rf " + shq(dir));
+    if (!resources::extract(resources::Zip::BuildImageArch, dir)) {
+        runCommand("rm -rf " + shq(dir));
+        return false;
+    }
+    return true;
 }
 
 }  // namespace native

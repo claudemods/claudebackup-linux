@@ -234,6 +234,48 @@ EOF
 echo "Menus generated."
 )CDB";
 
+// Arch: Calamares from the claudemods zips (port of cmiadvanced extrainstalls.sh).
+// $1 = extracted calamares-files parent dir, $2 = 1 for btrfs zstd:22 mount options
+inline const char* CALAMARES_SETUP = R"CDB(#!/bin/bash
+set -e
+
+SRC="$1/calamares-files"
+BTRFS="${2:-0}"
+cd "$SRC"
+
+echo "-> Installing Calamares packages..."
+pacman -U --noconfirm --overwrite="*" calamares-*.pkg.tar* ckbcomp-*.pkg.tar*
+
+echo "-> Copying Calamares configuration..."
+cp -r calamares /etc/
+
+echo "-> Copying claudemods branding..."
+mkdir -p /usr/share/calamares/branding
+cp -r claudemods /usr/share/calamares/branding/
+
+echo "-> Extracting extra files..."
+unzip -o -q extras.zip -d /
+
+if [ "$BTRFS" = "1" ]; then
+    echo "-> Applying btrfs level 22 compression (compress=zstd:22)..."
+    cp -f mount.conf /usr/share/calamares/modules/
+else
+    echo "-> Using the default mount configuration (ext4 / plain btrfs)."
+fi
+
+rm -f /usr/share/applications/calamares.desktop
+cp -f calamares.desktop /usr/share/applications/
+rm -rf /usr/share/calamares/branding/manjaro
+
+# initcpio preset = the running kernel's package (linux-cachyos, linux, linux-zen, ...)
+PKGBASE=$(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null || echo linux-cachyos)
+for f in /etc/calamares/modules/initcpio.conf /usr/share/calamares/modules/initcpio.conf; do
+    if [ -f "$f" ]; then sed -i "s/^kernel:.*/kernel: $PKGBASE/" "$f"; fi
+done
+
+echo "-> Calamares installed (kernel preset: $PKGBASE). It installs from /run/arch/bootmnt/LiveOS/rootfs.img."
+)CDB";
+
 // Applies the build-time constants to an embedded script
 inline std::string render(const char* script) {
     std::string s = script;

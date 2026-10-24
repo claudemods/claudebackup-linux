@@ -27,6 +27,16 @@ inline std::vector<Step> build(const Context& c) {
     steps.push_back({"mount-logic", "Chroot environment and mount point preparation",
         [&c]() { return native::bootstrapLiveroot(c); }});
 
+    if (families::isArch(c)) {
+        // 2-5 (Arch). The claudemods zip tree: GRUB BIOS/UEFI, efi.img, theme
+        steps.push_back({"arch-boot-files", "Copy the claudemods ISO tree (GRUB BIOS/UEFI, theme) from the embedded zip", [&c]() {
+            return native::runShell(families::archBootFilesCmd(c), "") == 0;
+        }});
+        steps.push_back({"generate-boot-menus", "Write the GRUB boot entries (boot/grub/kernels.cfg)", [&c, iso]() {
+            return writeFile(iso + "/boot/grub/kernels.cfg", families::archKernelsCfg(c));
+        }});
+    } else {   // Debian, Fedora, openSUSE, Alpine: unchanged steps 2-5.1
+
     // 2. Bootloader copy
     steps.push_back({"bootloader-copy", "Copy the bootloader assets (BIOS/UEFI)", [&c, iso]() {
         mkdirP(STAGING_DIR + "/scripts");
@@ -79,9 +89,12 @@ inline std::vector<Step> build(const Context& c) {
         std::string img = shq(iso + "/EFI/BOOT/efi.img"), cfg = shq(iso + "/EFI/BOOT/grub.cfg");
         return native::runShell("if [ -f " + img + " ] && [ -f " + cfg + " ]; then\n    mcopy -i " + img + " -o " + cfg + " ::/EFI/BOOT/grub.cfg\nfi\n", "") == 0;
     }});
+    }   // end non-Arch steps
 
-    // 8. Initramfs (chrooted)
+    // 8. Initramfs (chrooted; Arch first stages its hooks from the host)
     steps.push_back({"initramfs", "Live environment-specific initramfs generation", [&c, live]() {
+        std::string prep = families::initramfsPrepCmd(c);
+        if (!prep.empty() && native::runShell(prep, "") != 0) return false;
         return native::runShell(families::initramfsCmd(c), live) == 0;
     }});
     steps.push_back({"copy-kernel-initrd", "Copy kernel and initramfs to the live ISO directory", [&c]() {
@@ -89,10 +102,12 @@ inline std::vector<Step> build(const Context& c) {
     }});
 
     // 16. Squashfs
-    steps.push_back({"mksquashfs", "filesystem.squashfs compression", [&c]() { return native::runMksquashfs(c); }});
+    steps.push_back({"mksquashfs", baseName(families::squashfsDest(c)) + " compression", [&c]() {
+        return native::runMksquashfs(c, families::squashfsDest(c));
+    }});
 
     // 17. Distro hook
-    steps.push_back({"distro_hook_squashfs", "Hard link filesystem.squashfs where the distro expects it", [&c]() {
+    steps.push_back({"distro_hook_squashfs", families::isArch(c) ? "Write the rootfs.img checksum" : "Hard link filesystem.squashfs where the distro expects it", [&c]() {
         return native::runShell(families::hookSquashfsCmd(c), "") == 0;
     }});
 

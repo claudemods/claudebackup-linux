@@ -161,13 +161,13 @@ std::string checkLine(bool ok, const std::string& text) {
 
 std::string statusBlock() {
     static Distro d = detectDistro();
-    bool bootloaders = pathExists(STAGING_DIR + "/bootloaders/.download-complete");
-    bool toolsOk = remaster::missingTools().empty();
+    bool toolsOk = remaster::missingTools(d).empty();
 
     std::string s = COLOR_CYAN + "Current Configuration:" + COLOR_RESET + "\n";
     s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? " (family: " + d.family + ")" : " (not supported)"));
     s += checkLine(toolsOk, "Needed Tools");
-    s += checkLine(bootloaders, "Bootloaders");
+    s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
+    if (d.family == "archlinux") s += checkLine(commandExists("calamares"), "Calamares");
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
@@ -199,7 +199,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
     while (std::getline(ascii_stream, line)) menuBuffer += COLOR_RED + line + COLOR_RESET + "\n";
 
     menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + "\n";
-    menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Manjaro, Fedora, openSUSE, Alpine" + COLOR_RESET + "\n";
+    menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Fedora, openSUSE, Alpine" + COLOR_RESET + "\n";
     {
         std::lock_guard<std::mutex> lock(time_mutex);
         menuBuffer += COLOR_GREEN + "Current Time: " + current_time_str + COLOR_RESET + "\n";
@@ -274,17 +274,24 @@ void showGuide() {
         "Every box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n"
         "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
         "                                     plus your distro's live-boot packages\n"
+        "                                     (Arch: unzip, mkinitcpio, device-mapper, gnupg)\n"
         "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
+        "                                     (Arch: not needed, the claudemods zip is built in)\n"
         "3. Setup > ISO Name, Work Directory, Output Directory\n"
         "     ISO name blank = auto. Output directory blank = the work directory.\n"
         "4. Setup > Compression and Level     zstd (1-22, default 3), xz or gzip\n"
-        "5. Setup > RAM Mode                  adds a 'toram' boot entry\n"
-        "6. Detected System And Build Steps   check your distro says 'Support: yes'\n"
-        "7. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
+        "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
+        "6. Setup > Install Calamares (Arch)  claudemods Calamares, ext4 or btrfs zstd:22;\n"
+        "                                     do this BEFORE building so the ISO contains it\n"
+        "7. Detected System And Build Steps   check your distro says 'Support: yes'\n"
+        "8. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
         "                                     initramfs, kernel, squashfs, ISO\n"
         "                                     (everything is unmounted at the end, even on Ctrl+C)\n"
-        "8. Install ISO To USB / Launch Calamares\n"
+        "9. Install ISO To USB / Launch Calamares\n"
         "     USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n"
+        "Arch family (Arch, CachyOS, ...): the ISO is built from the embedded claudemods zip -\n"
+        "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks.\n"
+        "Manjaro is not supported.\n\n"
         "Free space needed is roughly twice the size of the finished ISO.\n"
         "Fedora: run 'sudo setenforce 0' before building.\n"
         "Log: " << LOG_FILE << COLOR_RESET << "\n";
@@ -373,6 +380,7 @@ void showSetupMenu() {
         "Set Compression (zstd / xz / gzip)",
         "Set Compression Level",
         "Toggle RAM Mode Boot Entry",
+        "Install Calamares (Arch: ext4 / btrfs zstd:22)",
         "Back to Main Menu"
     };
     int selected = 0;
@@ -387,7 +395,8 @@ void showSetupMenu() {
                 break;
             }
             case 1:
-                if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
+                if (detectDistro().family == "archlinux") logSuccess("Arch uses the boot files built into this binary - nothing to download.");
+                else if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
                 else logError("Bootloader download failed.");
                 pressAnyKey();
                 break;
@@ -406,7 +415,23 @@ void showSetupMenu() {
                 break;
             }
             case 7: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
-            case 8: return;
+            case 8: {
+                Distro d = detectDistro();
+                if (d.family != "archlinux") {
+                    std::cout << COLOR_RED << "Calamares setup is only available for the Arch family." << COLOR_RESET << std::endl;
+                    pressAnyKey();
+                    break;
+                }
+                std::cout << COLOR_GREEN << "Choose Calamares configuration for system install:\n"
+                          << "1) Default configuration (Ext4)\n"
+                          << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
+                bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
+                if (remaster::installCalamares(d, btrfs)) logSuccess("Calamares installation and configuration completed!");
+                else logError("Calamares setup failed.");
+                pressAnyKey();
+                break;
+            }
+            case 9: return;
         }
     }
 }
