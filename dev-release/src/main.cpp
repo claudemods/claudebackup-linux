@@ -4,6 +4,9 @@
 
 #include <pwd.h>
 #include <climits>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
 #include "menu.h"
 
 // Passed to the re-launched root process so it knows who started it, whichever tool was used
@@ -49,6 +52,65 @@ void relaunchAsRoot(int argc, char* argv[]) {
     exit(1);
 }
 
+// The terminal ignored the resize request: open the app again in a new window of the same
+// terminal, sized to fit (as the user, before asking for root). Returns true if it opened.
+bool reopenInBiggerTerminal(int argc, char* argv[], int rows, int cols) {
+    if (getenv("CDB_REOPENED")) return false;                        // never loop
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+
+    const std::string R = std::to_string(rows), C = std::to_string(cols);
+    std::vector<std::string> cmd;
+    if (getenv("KONSOLE_VERSION") && commandExists("konsole"))
+        cmd = {"konsole", "-p", "TerminalColumns=" + C, "-p", "TerminalRows=" + R, "-e"};
+    else if (getenv("KITTY_WINDOW_ID") && commandExists("kitty"))
+        cmd = {"kitty", "-o", "initial_window_width=" + C + "c", "-o", "initial_window_height=" + R + "c"};
+    else if ((getenv("ALACRITTY_WINDOW_ID") || getenv("ALACRITTY_SOCKET")) && commandExists("alacritty"))
+        cmd = {"alacritty", "-o", "window.dimensions.columns=" + C, "-o", "window.dimensions.lines=" + R, "-e"};
+    else if (getenv("GNOME_TERMINAL_SCREEN") && commandExists("gnome-terminal"))
+        cmd = {"gnome-terminal", "--geometry=" + C + "x" + R, "--"};
+    else if (getenv("VTE_VERSION") && commandExists("xfce4-terminal"))
+        cmd = {"xfce4-terminal", "--geometry=" + C + "x" + R, "-x"};
+    else if (getenv("XTERM_VERSION") && commandExists("xterm"))
+        cmd = {"xterm", "-geometry", C + "x" + R, "-e"};
+    else return false;
+
+    char self[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    cmd.push_back(n > 0 ? std::string(self, n) : argv[0]);
+    for (int i = 1; i < argc; i++) cmd.push_back(argv[i]);
+
+    setenv("CDB_REOPENED", "1", 1);
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        setsid();
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
+        std::vector<char*> args;
+        for (auto& s : cmd) args.push_back(const_cast<char*>(s.c_str()));
+        args.push_back(nullptr);
+        execvp(args[0], args.data());
+        _exit(127);
+    }
+    usleep(800000);   // a failed exec exits at once
+    int status = 0;
+    if (waitpid(pid, &status, WNOHANG) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 127) return false;
+    std::cout << COLOR_GREEN << APP_NAME << " opened in a bigger " << cmd[0] << " window (" << C << "x" << R << ")." << COLOR_RESET << std::endl;
+    return true;
+}
+
+// Every screen must fit without scrolling: resize the terminal, or reopen in a bigger window
+void fitTerminal(int argc, char* argv[], bool mayReopen) {
+    const int rows = requiredRows(), cols = UI_COLUMNS;
+    if (resizeTerminal(rows, cols)) return;
+    if (mayReopen && reopenInBiggerTerminal(argc, argv, rows, cols)) exit(0);
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+    std::cout << COLOR_YELLOW << "This window is " << w.ws_col << "x" << w.ws_row << "; make it at least "
+              << cols << "x" << rows << " so every screen fits without scrolling." << COLOR_RESET << std::endl;
+    sleep(2);
+}
+
 // Who started us: our own --cdb-user=, else what sudo / doas / pkexec leave behind, else the login name
 std::string originalUser(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
@@ -68,12 +130,19 @@ std::string originalUser(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-    if (geteuid() != 0) relaunchAsRoot(argc, argv);
+    if (geteuid() != 0) {
+        // As the user: size the window first (a new terminal window can only be opened from here)
+        USERNAME = originalUser(argc, argv);
+        loadConfig();
+        fitTerminal(argc, argv, true);
+        relaunchAsRoot(argc, argv);
+    }
 
     USERNAME = originalUser(argc, argv);
 
     mkdirP(configDirPath());
     loadConfig();
+    fitTerminal(argc, argv, false);
 
     std::thread time_thread(update_time_thread);
 

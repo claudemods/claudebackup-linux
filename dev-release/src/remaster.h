@@ -81,12 +81,13 @@ inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
-    // Gentoo builds squashfs-tools with gzip only unless its compressor USE flags are on
-    if (d.family == "gentoo")   return "mkdir -p /etc/portage/package.use && "
-                                       "echo 'sys-fs/squashfs-tools lz4 lzma lzo zstd' > /etc/portage/package.use/claudebackup-linux && "
-                                       "emerge --ask=n --update --changed-use sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut sys-fs/lvm2";
+    if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut sys-fs/lvm2";
     return "";
 }
+
+// Squashfs compression per distro: Gentoo's squashfs-tools is built with gzip by default, every
+// other distro uses zstd (its level is set in Setup)
+inline std::string compressionFor(const Distro& d) { return d.family == "gentoo" ? "gzip" : "zstd"; }
 
 // Gentoo: make sure emerge can work (repository present, make.profile a real profile link)
 inline bool prepareGentooPortage() {

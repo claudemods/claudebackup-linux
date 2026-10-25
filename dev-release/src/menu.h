@@ -8,6 +8,8 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <pwd.h>
+#include <functional>
+#include <sys/ioctl.h>
 #include "remaster.h"
 
 // Interactive menu, same look and feel as the claudemods multi iso creator:
@@ -28,14 +30,17 @@ struct MenuConfig {
     std::string isoName;       // empty = auto-generated
     std::string workDir;       // empty = default
     std::string outputDir;     // empty = work dir
-    std::string algo = "zstd";
-    int level = 3;
+    int level = 3;             // zstd level (Gentoo uses gzip, no level)
     bool ramMode = true;
     std::string isoTag;        // Arch volume label, empty = 2026
     std::string cloneDir;      // <parent>/clone_system_temp, "/" is bound here; empty = default
     std::string imageFormat = "squashfs";   // Arch only: squashfs | erofs
 };
 MenuConfig mcfg;
+
+// The running distro, detected once: menus, status and guide only show what applies to it
+const Distro& sysDistro() { static Distro d = detectDistro(); return d; }
+bool onFamily(const char* f) { return sysDistro().family == f; }
 
 // The user's real home from the password database (root is /root, and homes are not always /home/<user>)
 std::string userHome() {
@@ -58,7 +63,6 @@ void saveConfig() {
     f << "isoName=" << mcfg.isoName << "\n";
     f << "workDir=" << mcfg.workDir << "\n";
     f << "outputDir=" << mcfg.outputDir << "\n";
-    f << "algo=" << mcfg.algo << "\n";
     f << "level=" << mcfg.level << "\n";
     f << "ramMode=" << (mcfg.ramMode ? "1" : "0") << "\n";
     f << "isoTag=" << mcfg.isoTag << "\n";
@@ -74,7 +78,6 @@ void loadConfig() {
         if (k == "isoName") mcfg.isoName = v;
         else if (k == "workDir") mcfg.workDir = v;
         else if (k == "outputDir") mcfg.outputDir = v;
-        else if (k == "algo") mcfg.algo = v;
         else if (k == "level") mcfg.level = atoi(v.c_str());
         else if (k == "ramMode") mcfg.ramMode = (v == "1");
         else if (k == "isoTag") mcfg.isoTag = v;
@@ -88,7 +91,7 @@ RemasterOptions currentOptions() {
     o.workDir = mcfg.workDir;
     o.outputDir = mcfg.outputDir;
     o.isoName = mcfg.isoName;
-    o.algo = mcfg.algo;
+    o.algo = remaster::compressionFor(sysDistro());
     o.level = mcfg.level;
     o.ramMode = mcfg.ramMode ? 1 : 0;
     o.isoTag = mcfg.isoTag;
@@ -183,25 +186,30 @@ std::string checkLine(bool ok, const std::string& text) {
            (ok ? COLOR_GREEN : COLOR_RED) + " " + text + COLOR_RESET + "\n";
 }
 
+std::string compressionText() {
+    if (onFamily("archlinux") && mcfg.imageFormat == "erofs") return "erofs (mkfs.erofs zstd)";
+    if (onFamily("gentoo")) return "squashfs gzip";
+    return "squashfs zstd level " + std::to_string(mcfg.level);
+}
+
+// Only the lines that apply to the running distro
 std::string statusBlock() {
-    static Distro d = detectDistro();
+    const Distro& d = sysDistro();
     bool toolsOk = remaster::missingTools(d).empty();
 
     std::string s = COLOR_CYAN + "Current Configuration:" + COLOR_RESET + "\n";
     s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? " (family: " + d.family + ")" : " (not supported)"));
     s += checkLine(toolsOk, "Needed Tools");
     s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
-    if (d.family == "archlinux") {
+    if (d.family == "archlinux")
         s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
-        s += checkLine(true, "Image Format: " + mcfg.imageFormat + (mcfg.imageFormat == "erofs" ? " (mkfs.erofs zstd)" : ""));
-    }
     if (remaster::calamaresAvailable(d)) s += checkLine(commandExists("calamares"), "Calamares");
     if (d.family == "alpine") s += checkLine(remaster::alpineInstallerReady(), "Alpine Installer Tools");
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
     s += checkLine(!mcfg.cloneDir.empty(), "Clone Directory: " + (mcfg.cloneDir.empty() ? "Not set (uses " + defaultCloneDir() + ")" : mcfg.cloneDir));
-    s += checkLine(true, "Compression: " + mcfg.algo + " level " + std::to_string(mcfg.level));
+    s += checkLine(true, "Image: " + compressionText());
     return s;
 }
 
@@ -229,7 +237,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
     while (std::getline(ascii_stream, line)) menuBuffer += COLOR_RED + line + COLOR_RESET + "\n";
 
     menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + "\n";
-    menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Fedora, openSUSE, Alpine, Gentoo" + COLOR_RESET + "\n";
+    menuBuffer += COLOR_RED + "Back up your running " + sysDistro().prettyName + " system as a bootable live ISO" + COLOR_RESET + "\n";
     menuBuffer += COLOR_RED + "Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix!" + COLOR_RESET + "\n";
     {
         std::lock_guard<std::mutex> lock(time_mutex);
@@ -297,52 +305,57 @@ int pickFromMenu(const std::string& title, const std::vector<std::string>& items
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
+// The guide for the running distro only
+std::string guideText() {
+    const std::string& f = sysDistro().family;
+    const bool arch = f == "archlinux", alpine = f == "alpine", gentoo = f == "gentoo";
+    std::string g =
+        "A full clone: your users, passwords, settings and files are copied into the ISO exactly as\n"
+        "they are. No live account is created and nothing is added to the clone.\n"
+        "The image is made from '/' bind-mounted at your Clone Directory. A bind of '/' only shows the\n"
+        "root filesystem: separate partitions or btrfs subvolumes (e.g. @home, /boot) are not included.\n"
+        "Each box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n";
+    int n = 0;
+    auto step = [&](const std::string& text) { g += std::to_string(++n) + ". " + text + "\n"; };
+    const std::string pad = "                                     ";
+
+    if (arch)        step("Setup > Install Needed Tools      squashfs-tools, erofs-utils, libisoburn, mtools, unzip, mkinitcpio");
+    else if (gentoo) step("Setup > Install Needed Tools      emerge squashfs-tools, libisoburn, mtools, curl, dracut, lvm2\n" +
+                          pad + "(fetches the gentoo repo / fixes the profile if needed)");
+    else if (f == "debian") step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, curl, live-boot");
+    else if (f == "fedora") step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, curl, dracut-live");
+    else             step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl");
+    if (!arch) step("Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files");
+    step("Setup > ISO Name / Work / Output / Clone Directory   (blank ISO name = auto)");
+    if (arch) {
+        step("Setup > zstd Level / Image Format squashfs (zstd) or erofs (mkfs.erofs zstd, kernel 6.10+)");
+        step("Setup > ISO Tag                   volume label the live system boots from (default 2026)");
+    } else if (!gentoo) {
+        step("Setup > zstd Compression Level    1-22, default 3 (higher = smaller, slower)");
+    }
+    step(std::string("Setup > RAM Mode                  adds a ") + (arch ? "copytoram=y" : "toram") + " boot entry");
+    if (alpine) step("Setup > Alpine Installer Tools    tools the live ISO needs to install the clone to disk\n" +
+                     pad + "(do this BEFORE building, so the ISO contains them)");
+    else        step("Setup > Install Calamares         ext4 or btrfs zstd:22, claudemods branding\n" +
+                     pad + "(do this BEFORE building, so the ISO contains it)");
+    step("Detected System And Build Steps   check it says 'Support: yes'");
+    step("Create Bootable ISO               everything is unmounted at the end, even on Ctrl+C");
+    if (alpine) step("Install Cloned System To Disk     (in the live ISO) your clone back on a disk, not a\n" +
+                     pad + "fresh Alpine: ext4 or btrfs, GRUB for UEFI or BIOS");
+    else        step("Launch Calamares                  (in the live ISO) installs the clone to a disk");
+    g += "   Install ISO To USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n";
+    if (gentoo)
+        g += "Gentoo: the image is squashfs gzip. The kernel needs CONFIG_SQUASHFS, CONFIG_OVERLAY_FS,\n"
+             "CONFIG_ISO9660_FS and CONFIG_BLK_DEV_LOOP (=m or =y); the build names any that are off.\n";
+    if (f == "fedora") g += "Fedora: run 'setenforce 0' as root before building.\n";
+    g += "Free space needed is roughly twice the size of the finished ISO. Log: " + LOG_FILE + "\n";
+    return g;
+}
+
 void showGuide() {
     clearScreen();
-    std::cout << COLOR_CYAN << APP_NAME << " " << APP_VERSION << " - guide" << COLOR_RESET << "\n\n" << COLOR_GREEN <<
-        "A full clone: your own users, passwords, settings and /home are copied into the ISO\n"
-        "exactly as they are. No live account is created and nothing is added to the clone.\n"
-        "The squashfs is made from the whole system bind-mounted (mount --bind /) at your Clone\n"
-        "Directory (all distros). A bind of '/' only shows the root filesystem: separate partitions\n"
-        "or btrfs subvolumes (e.g. @home, /boot) are NOT included.\n"
-        "Every box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n"
-        "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
-        "                                     plus your distro's live-boot packages\n"
-        "                                     (Arch: unzip, erofs-utils, mkinitcpio, device-mapper, gnupg)\n"
-        "                                     (Gentoo: emerge ... sys-kernel/dracut)\n"
-        "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
-        "                                     (Arch: not needed, the claudemods zip is built in)\n"
-        "3. Setup > ISO Name, Work Directory, Output Directory, Clone Directory\n"
-        "     ISO name blank = auto. Output directory blank = the work directory.\n"
-        "     Clone directory: parent folder, the system is bound at <parent>/clone_system_temp.\n"
-        "4. Setup > Compression and Level     zstd (1-22, default 3), xz or gzip\n"
-        "   Setup > Image Format (Arch)       squashfs, or erofs (mkfs.erofs -zzstd -C 65536\n"
-        "                                     --chunksize 65536, kernel 6.10+ for erofs zstd)\n"
-        "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
-        "6. Setup > Install Calamares         ext4 or btrfs zstd:22, claudemods branding;\n"
-        "                                     Arch: the claudemods zip packages, squashfs or erofs\n"
-        "                                     (match Image Format). Debian, Fedora, openSUSE,\n"
-        "                                     Gentoo: your repo's calamares package + a full-clone\n"
-        "                                     config (no users page, GRUB, initramfs-tools/dracut).\n"
-        "   Alpine: Setup > Alpine Installer Tools instead (Calamares does not run on Alpine);\n"
-        "   the live ISO then has 'Install Cloned System To Disk' in the main menu.\n"
-        "                                     Do this BEFORE building so the ISO contains it\n"
-        "7. Detected System And Build Steps   check your distro says 'Support: yes'\n"
-        "8. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
-        "                                     initramfs, kernel, squashfs, ISO\n"
-        "                                     (everything is unmounted at the end, even on Ctrl+C)\n"
-        "9. Install ISO To USB / Launch Calamares (Alpine: Install Cloned System To Disk -\n"
-        "     your clone back on a disk, ext4 or btrfs, GRUB for UEFI or BIOS; not a fresh install)\n"
-        "     USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n"
-        "Arch family (Arch, CachyOS, ...): the ISO is built from the embedded claudemods zip -\n"
-        "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks - with the\n"
-        "original cmiadvanced mksquashfs and xorriso commands. Setup > Set ISO Tag sets the\n"
-        "volume label the live system boots from (default 2026).\n"
-        "Gentoo: dracut dmsquash-live; your kernel needs CONFIG_SQUASHFS, CONFIG_OVERLAY_FS,\n"
-        "CONFIG_ISO9660_FS and CONFIG_BLK_DEV_LOOP (=m or =y) - the build tells you if one is off.\n\n"
-        "Free space needed is roughly twice the size of the finished ISO.\n"
-        "Fedora: run 'setenforce 0' as root before building.\n"
-        "Log: " << LOG_FILE << COLOR_RESET << "\n";
+    std::cout << COLOR_CYAN << APP_NAME << " " << APP_VERSION << " - guide (" << sysDistro().prettyName << ")"
+              << COLOR_RESET << "\n\n" << COLOR_GREEN << guideText() << COLOR_RESET;
     pressAnyKey();
 }
 void showSystemInfo() {
@@ -429,137 +442,125 @@ void installISOToUSB() {
 // ---------------------------------------------------------------------------
 // Setup menu
 // ---------------------------------------------------------------------------
+// One Setup item: its label and what it does
+struct SetupItem {
+    std::string label;
+    std::function<void()> run;
+};
+
+void setupInstallTools() {
+    const Distro& d = sysDistro();
+    std::string cmd = remaster::installToolsCommand(d);
+    if (cmd.empty()) std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
+    else if (d.family == "gentoo" && !remaster::prepareGentooPortage())
+        logError("Portage is not usable yet (see above), so nothing was emerged.");
+    else { std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl; runCommand(cmd); }
+    pressAnyKey();
+}
+
+void setupCloneDir() {
+    // cmiadvanced setCloneDir: parent folder + /clone_system_temp
+    std::string def = userHome();
+    std::cout << COLOR_GREEN << "Current clone directory: " << (mcfg.cloneDir.empty() ? "Not set" : mcfg.cloneDir) << "\n"
+              << "Default directory: " << def << COLOR_RESET << std::endl;
+    std::string parent = getUserInput("Enter parent directory for clone_system_temp folder (e.g., " + def + " or $USER): ");
+    size_t pos = parent.find("$USER");
+    if (pos != std::string::npos) parent.replace(pos, 5, USERNAME);
+    if (parent.empty()) parent = def;
+    while (parent.size() > 1 && parent.back() == '/') parent.pop_back();
+    if (parent[0] != '/') {
+        std::cout << COLOR_RED << "Please enter an absolute path (starting with /)." << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
+    mcfg.cloneDir = (parent == "/" ? "" : parent) + "/clone_system_temp";
+    mkdirP(mcfg.cloneDir);
+    saveConfig();
+}
+
+void setupIsoTag() {
+    // Volume label and kernels.cfg label=, so no spaces or quotes
+    std::string tag = getUserInput("Enter ISO tag (e.g., default is 2026, blank = 2026): ");
+    if (tag.find_first_of(" \t\"'") != std::string::npos) {
+        std::cout << COLOR_RED << "The ISO tag cannot contain spaces or quotes." << COLOR_RESET << std::endl;
+        pressAnyKey();
+    } else { mcfg.isoTag = tag; saveConfig(); }
+}
+
+void setupImageFormat() {
+    std::cout << COLOR_GREEN << "Choose the system image type:\n"
+              << "1) Squashfs (mksquashfs zstd, Setup > zstd Compression Level)\n"
+              << "2) Erofs (mkfs.erofs -zzstd -C 65536 --chunksize 65536)" << COLOR_RESET << std::endl;
+    std::string f = getUserInput("Enter your choice (1 or 2): ");
+    if (f == "1" || f == "2") { mcfg.imageFormat = (f == "2") ? "erofs" : "squashfs"; saveConfig(); }
+}
+
+void setupAlpineInstallerTools() {
+    // Calamares does not run on Alpine: install what our own installer needs
+    std::string cmd = remaster::alpineInstallerToolsCommand(sysDistro());
+    std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
+    if (runCommand(cmd) == 0) logSuccess("Installer tools ready - build the ISO now so they are in the clone.");
+    else logError("Installing the installer tools failed.");
+    pressAnyKey();
+}
+
+void setupCalamares() {
+    const Distro& d = sysDistro();
+    std::cout << COLOR_GREEN << "Choose Calamares configuration for system install:\n"
+              << "1) Default configuration (Ext4)\n"
+              << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
+    bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
+    bool erofs = false;   // only Arch can build an erofs image
+    if (d.family == "archlinux") {
+        std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
+                  << "1) Default Cloned Squashfs System\n"
+                  << "2) Erofs Cloned System Image\n"
+                  << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
+        std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
+        erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
+    }
+    if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
+    else logError("Calamares setup failed.");
+    pressAnyKey();
+}
+
+// The Setup items for the running distro only (no Arch items on Gentoo, and so on)
+std::vector<SetupItem> setupItems() {
+    const bool arch = onFamily("archlinux"), gentoo = onFamily("gentoo"), alpine = onFamily("alpine");
+    std::vector<SetupItem> items;
+    items.push_back({"Install Needed Tools", setupInstallTools});
+    if (!arch) items.push_back({"Download Bootloaders", [] {
+        if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
+        else logError("Bootloader download failed.");
+        pressAnyKey();
+    }});
+    items.push_back({"Set ISO Name (blank = auto)", [] { mcfg.isoName = getUserInput("ISO name (e.g. my-backup.iso, blank = auto): "); saveConfig(); }});
+    items.push_back({"Set Work Directory", [] { mcfg.workDir = getUserInput("Work directory (blank = " + DEFAULT_WORK_DIR + "): "); saveConfig(); }});
+    items.push_back({"Set Output Directory", [] { mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); }});
+    items.push_back({"Set Clone Directory (system is bind-mounted here)", setupCloneDir});
+    if (!gentoo) items.push_back({"Set zstd Compression Level", [] {
+        int l = atoi(getUserInput("zstd level (1-22, default 3): ").c_str());
+        if (l >= 1 && l <= 22) { mcfg.level = l; saveConfig(); }
+    }});
+    if (arch) items.push_back({"Set Image Format (squashfs / erofs)", setupImageFormat});
+    items.push_back({"Toggle RAM Mode Boot Entry", [] { mcfg.ramMode = !mcfg.ramMode; saveConfig(); }});
+    if (arch) items.push_back({"Set ISO Tag (volume label, default 2026)", setupIsoTag});
+    if (alpine) items.push_back({"Alpine Installer Tools (to install the clone back to disk)", setupAlpineInstallerTools});
+    else if (sysDistro().supported()) items.push_back({"Install Calamares (ext4 / btrfs zstd:22)", setupCalamares});
+    return items;
+}
+
 void showSetupMenu() {
-    const bool alpine = detectDistro().family == "alpine";
-    std::vector<std::string> items = {
-        "Install Needed Tools",
-        "Download Bootloaders",
-        "Set ISO Name (blank = auto)",
-        "Set Work Directory",
-        "Set Output Directory",
-        "Set Clone Directory (system is bind-mounted here)",
-        "Set Compression (zstd / xz / gzip)",
-        "Set Compression Level",
-        "Toggle RAM Mode Boot Entry",
-        "Set ISO Tag (Arch volume label, default 2026)",
-        "Set Image Format (Arch: squashfs / erofs)",
-        alpine ? "Alpine Installer Tools (to install the clone back to disk)"
-               : "Install Calamares (ext4 / btrfs zstd:22)",
-        "Back to Main Menu"
-    };
+    std::vector<SetupItem> items = setupItems();
+    std::vector<std::string> labels;
+    for (const auto& i : items) labels.push_back(i.label);
+    labels.push_back("Back to Main Menu");
+
     int selected = 0;
     while (true) {
-        int pick = pickFromMenu("setup menu:", items, selected);
-        switch (pick) {
-            case 0: {
-                Distro d = detectDistro();
-                std::string cmd = remaster::installToolsCommand(d);
-                if (cmd.empty()) std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
-                else if (d.family == "gentoo" && !remaster::prepareGentooPortage())
-                    logError("Portage is not usable yet (see above), so nothing was emerged.");
-                else { std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl; runCommand(cmd); }
-                pressAnyKey();
-                break;
-            }
-            case 1:
-                if (detectDistro().family == "archlinux") logSuccess("Arch uses the boot files built into this binary - nothing to download.");
-                else if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
-                else logError("Bootloader download failed.");
-                pressAnyKey();
-                break;
-            case 2: mcfg.isoName = getUserInput("ISO name (e.g. my-backup.iso, blank = auto): "); saveConfig(); break;
-            case 3: mcfg.workDir = getUserInput("Work directory (blank = " + DEFAULT_WORK_DIR + "): "); saveConfig(); break;
-            case 4: mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); break;
-            case 5: {
-                // cmiadvanced setCloneDir: parent folder + /clone_system_temp
-                std::string def = userHome();
-                std::cout << COLOR_GREEN << "Current clone directory: " << (mcfg.cloneDir.empty() ? "Not set" : mcfg.cloneDir) << "\n"
-                          << "Default directory: " << def << COLOR_RESET << std::endl;
-                std::string parent = getUserInput("Enter parent directory for clone_system_temp folder (e.g., " + def + " or $USER): ");
-                size_t pos = parent.find("$USER");
-                if (pos != std::string::npos) parent.replace(pos, 5, USERNAME);
-                if (parent.empty()) parent = def;
-                while (parent.size() > 1 && parent.back() == '/') parent.pop_back();
-                if (parent[0] != '/') {
-                    std::cout << COLOR_RED << "Please enter an absolute path (starting with /)." << COLOR_RESET << std::endl;
-                    pressAnyKey();
-                    break;
-                }
-                mcfg.cloneDir = (parent == "/" ? "" : parent) + "/clone_system_temp";
-                mkdirP(mcfg.cloneDir);
-                saveConfig();
-                break;
-            }
-            case 6: {
-                std::string a = getUserInput("Algorithm (zstd/xz/gzip/lz4): ");
-                if (a == "zstd" || a == "xz" || a == "gzip" || a == "lz4") { mcfg.algo = a; saveConfig(); }
-                else { std::cout << COLOR_RED << "Unknown algorithm." << COLOR_RESET << std::endl; pressAnyKey(); }
-                break;
-            }
-            case 7: {
-                int l = atoi(getUserInput("Level (zstd 1-22, default 3): ").c_str());
-                if (l > 0) { mcfg.level = l; saveConfig(); }
-                break;
-            }
-            case 8: mcfg.ramMode = !mcfg.ramMode; saveConfig(); break;
-            case 9: {
-                // Volume label and kernels.cfg label=, so no spaces or quotes
-                std::string tag = getUserInput("Enter ISO tag (e.g., default is 2026, blank = 2026): ");
-                if (tag.find_first_of(" \t\"'") != std::string::npos) {
-                    std::cout << COLOR_RED << "The ISO tag cannot contain spaces or quotes." << COLOR_RESET << std::endl;
-                    pressAnyKey();
-                } else { mcfg.isoTag = tag; saveConfig(); }
-                break;
-            }
-            case 10: {
-                if (detectDistro().family != "archlinux") {
-                    std::cout << COLOR_RED << "Only the Arch family can build an erofs image; other distros use squashfs." << COLOR_RESET << std::endl;
-                    pressAnyKey();
-                    break;
-                }
-                std::cout << COLOR_GREEN << "Choose the system image type:\n"
-                          << "1) Squashfs (mksquashfs, Setup > Compression and Level)\n"
-                          << "2) Erofs (mkfs.erofs -zzstd -C 65536 --chunksize 65536)" << COLOR_RESET << std::endl;
-                std::string f = getUserInput("Enter your choice (1 or 2): ");
-                if (f == "1" || f == "2") { mcfg.imageFormat = (f == "2") ? "erofs" : "squashfs"; saveConfig(); }
-                break;
-            }
-            case 11: {
-                Distro d = detectDistro();
-                if (!d.supported()) {
-                    std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
-                    pressAnyKey();
-                    break;
-                }
-                if (alpine) {
-                    // Calamares does not run on Alpine: install what our own installer needs
-                    std::string cmd = remaster::alpineInstallerToolsCommand(d);
-                    std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
-                    if (runCommand(cmd) == 0) logSuccess("Installer tools ready - build the ISO now so they are in the clone.");
-                    else logError("Installing the installer tools failed.");
-                    pressAnyKey();
-                    break;
-                }
-                std::cout << COLOR_GREEN << "Choose Calamares configuration for system install:\n"
-                          << "1) Default configuration (Ext4)\n"
-                          << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
-                bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
-                bool erofs = false;   // only Arch can build an erofs image
-                if (d.family == "archlinux") {
-                    std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
-                              << "1) Default Cloned Squashfs System\n"
-                              << "2) Erofs Cloned System Image\n"
-                              << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
-                    std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
-                    erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
-                }
-                if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
-                else logError("Calamares setup failed.");
-                pressAnyKey();
-                break;
-            }
-            case 12: return;
-        }
+        int pick = pickFromMenu("setup menu:", labels, selected);
+        if (pick == static_cast<int>(items.size())) return;
+        items[pick].run();
     }
 }
 
@@ -608,18 +609,51 @@ void installClonedSystem() {
 // ---------------------------------------------------------------------------
 // Main menu
 // ---------------------------------------------------------------------------
-void showMainMenu() {
-    const bool alpine = detectDistro().family == "alpine";
-    std::vector<std::string> items = {
+std::vector<std::string> mainMenuItems() {
+    return {
         "Guide",
         "Setup",
         "Detected System And Build Steps",
         "Create Bootable ISO",
         "Check Disk Usage",
         "Install ISO To USB",
-        alpine ? "Install Cloned System To Disk" : "Launch Calamares",
+        onFamily("alpine") ? "Install Cloned System To Disk" : "Launch Calamares",
         "Exit"
     };
+}
+
+// ---------------------------------------------------------------------------
+// Window size: every menu screen (banner, status, items) and the guide must fit without scrolling
+// ---------------------------------------------------------------------------
+const int UI_COLUMNS = 104;   // widest lines: the banner (86) and the guide (~98)
+
+int countLines(const std::string& s) { return static_cast<int>(std::count(s.begin(), s.end(), '\n')); }
+
+int requiredRows() {
+    const int header = 8 + 3 + 1 + 2 + 1;              // banner, 3 text lines, clock, df header + line, blank
+    int items = std::max(static_cast<int>(mainMenuItems().size()), static_cast<int>(setupItems().size()) + 1);
+    int menuScreen = header + countLines(statusBlock()) + 3 + items + 1;   // + title, underline, cursor line
+    int guideScreen = 2 + countLines(guideText()) + 2;                     // + heading, "Press any key"
+    return std::max(menuScreen, guideScreen);
+}
+
+bool terminalFits(int rows, int cols) {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != 0 || w.ws_row == 0) return true;   // not a terminal: nothing to do
+    return w.ws_row >= rows && w.ws_col >= cols;
+}
+
+// Asks the terminal to resize itself (xterm/VTE/kitty/alacritty and most others honour this)
+bool resizeTerminal(int rows, int cols) {
+    if (terminalFits(rows, cols)) return true;
+    std::cout << "\033[8;" << rows << ";" << cols << "t" << std::flush;
+    for (int i = 0; i < 10 && !terminalFits(rows, cols); i++) usleep(50000);
+    return terminalFits(rows, cols);
+}
+
+void showMainMenu() {
+    std::vector<std::string> items = mainMenuItems();
+    const bool alpine = onFamily("alpine");
     int selected = 0;
     while (true) {
         int pick = pickFromMenu(APP_NAME + " main menu:", items, selected);

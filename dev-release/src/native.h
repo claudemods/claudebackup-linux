@@ -6,7 +6,11 @@
 #include <ctime>
 #include <set>
 #include <thread>
+#include <chrono>
+#include <atomic>
+#include <iomanip>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include "context.h"
 #include "resources.h"
@@ -351,6 +355,67 @@ inline std::string erofsExcludeArgs(const Context& c) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Green progress bar for mkfs.erofs (as in the claudemods multi iso creator): mkfs.erofs runs
+// in the background writing to a log; the bar shows a spinner, elapsed time and image size.
+// The percentage is estimated from time (to 60%, then held) and jumps to 100% when it finishes.
+// ---------------------------------------------------------------------------
+inline std::string humanSize(const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return "0 B";
+    double s = st.st_size;
+    std::ostringstream o;
+    o << std::fixed << std::setprecision(2);
+    if (s >= 1073741824.0) o << s / 1073741824.0 << " GB";
+    else if (s >= 1048576.0) o << s / 1048576.0 << " MB";
+    else if (s >= 1024.0) o << s / 1024.0 << " KB";
+    else o << std::setprecision(0) << s << " B";
+    return o.str();
+}
+
+inline void drawErofsBar(int percentage, int spinnerPos, int spinnerChar, int secs, const std::string& size) {
+    struct winsize w;
+    int width = (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) ? w.ws_col : 80;
+    char timer[16];
+    snprintf(timer, sizeof(timer), "%02d:%02d", secs / 60, secs % 60);
+    std::string extra = std::string(" [") + timer + "] [" + size + "]";
+    int barWidth = width - 9 - static_cast<int>(extra.size());
+    if (barWidth < 10) barWidth = 10;
+    if (percentage < 1) percentage = 1;
+    int filled = std::max(1, percentage * barWidth / 100);
+    const char spinner[] = {'|', '/', '-', '\\'};
+
+    std::string bar;
+    for (int i = 0; i < filled; i++) bar += (i == spinnerPos % filled && percentage < 100) ? spinner[spinnerChar % 4] : '=';
+    bar += std::string(barWidth - filled, ' ');
+    char pct[8];
+    snprintf(pct, sizeof(pct), "%3d%%", percentage);
+    std::cout << "\r" << COLOR_GREEN << "[" << bar << "] " << pct << extra << COLOR_RESET << std::flush;
+}
+
+inline int runWithErofsBar(const std::string& cmd, const std::string& output, const std::string& logFile) {
+    std::atomic<bool> done(false);
+    int rc = 0;
+    std::thread worker([&] { rc = runCommand(cmd + " > " + shq(logFile) + " 2>&1"); done = true; });
+
+    std::cout << "\033[?25l";   // hide the cursor while drawing
+    auto start = std::chrono::steady_clock::now();
+    int spinnerPos = 0, spinnerChar = 0, frame = 0;
+    while (!done) {
+        int secs = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count());
+        int pct = std::min(60, std::max(1, secs / 10));
+        if (++frame >= 3) { frame = 0; spinnerPos++; spinnerChar++; }
+        drawErofsBar(pct, spinnerPos, spinnerChar, secs, humanSize(output));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    worker.join();
+    int secs = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count());
+    drawErofsBar(rc == 0 ? 100 : std::min(60, std::max(1, secs / 10)), 0, 0, secs, humanSize(output));
+    std::cout << "\033[?25h" << std::endl;
+    if (rc != 0) runCommand("tail -n 20 " + shq(logFile));
+    return rc;
+}
+
 inline bool runMkerofs(const Context& c, const std::string& dest) {
     if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (use Setup > Install Needed Tools)"); return false; }
 
@@ -363,21 +428,25 @@ inline bool runMkerofs(const Context& c, const std::string& dest) {
         " --ignore-mtime" + erofsExcludeArgs(c) + " " + shq(dest) + " " + shq(src);
 
     logNormal("Running: " + cmd);
-    bool ok = runCommand(cmd) == 0;
+    logNormal("Creating EROFS image... (mkfs.erofs output: " + STAGING_DIR + "/erofs.log)");
+    bool ok = runWithErofsBar(cmd, dest, STAGING_DIR + "/erofs.log") == 0;
+    if (ok) logSuccess("EROFS image created: " + dest + " (" + humanSize(dest) + ")");
     logNormal("Unmounting bind mount...");
     if (!unbindRoot(src)) ok = false;
     return ok;
 }
 
-// mksquashfs is sometimes built with only some compressors (Gentoo: gzip unless USE=zstd etc.)
+// mksquashfs is sometimes built with only some compressors (Gentoo: gzip unless USE=zstd etc.).
+// Its help output differs between versions, so test for real: squash a tiny folder with it.
 inline bool squashfsHasCompressor(const std::string& algo) {
-    std::string help = captureCommand("mksquashfs -help 2>&1");
-    if (!contains(help, "ompressors available")) return true;   // no list in this version: don't guess
-    for (const auto& l : splitLines(help)) {
-        std::string t = trim(l);
-        if (t == algo || startsWith(t, algo + " ")) return true;
-    }
-    return false;
+    const std::string dir = STAGING_DIR + "/comp-test";
+    runCommand("rm -rf " + shq(dir));
+    mkdirP(dir + "/in");
+    writeFile(dir + "/in/test", "claudebackup\n");
+    bool ok = runCommand("mksquashfs " + shq(dir + "/in") + " " + shq(dir + "/test.sqfs") +
+                         " -noappend -no-progress -comp " + shq(algo) + " >/dev/null 2>&1") == 0;
+    runCommand("rm -rf " + shq(dir));
+    return ok;
 }
 
 inline bool runMksquashfs(const Context& c, const std::string& dest) {
@@ -385,8 +454,7 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
 
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
     if (algo != "gzip" && !squashfsHasCompressor(algo)) {
-        logWarning("This mksquashfs was built without " + algo + " - using gzip instead" +
-                   (c.distro.family == "gentoo" ? " (Setup > Install Needed Tools rebuilds it with zstd/xz)." : "."));
+        logWarning("This mksquashfs was built without " + algo + " - using gzip instead.");
         algo = "gzip";
     }
     int lvl = c.settings.compressionLevel > 0 ? c.settings.compressionLevel : 3;
@@ -413,7 +481,10 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
     }
 
     logNormal("Running: " + cmd);
+    // mksquashfs draws its progress bar on our terminal: print it in green
+    std::cout << COLOR_GREEN << std::flush;
     bool ok = runCommand(cmd) == 0;
+    std::cout << COLOR_RESET << std::flush;
     logNormal("Unmounting bind mount...");
     if (!unbindRoot(src)) ok = false;
     return ok;
