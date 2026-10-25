@@ -3,10 +3,27 @@
 
 #include "common.h"
 
-// The claudemods zips from cmiadvanced, linked into the binary by the Makefile (ld -r -b binary):
+// The claudemods zips from cmiadvanced, embedded into the binary by the assembler (.incbin), so
+// building needs only g++ - no separate ld step (KDE neon / Ubuntu ship no plain "ld" without
+// the binutils package). Paths are relative to dev-release/, where make runs the compiler.
 //   build-image-arch-img.zip  Arch ISO tree (GRUB BIOS/UEFI, theme, ucode) + mkinitcpio hooks
 //   calamares-files.zip       Calamares packages and config (ext4 / btrfs)
 //   claudemods.zip            Calamares branding
+#define CDB_EMBED_ZIP(sym, file)            \
+    ".section .rodata\n"                    \
+    ".global " sym "_start\n"               \
+    ".balign 16\n"                          \
+    sym "_start:\n"                         \
+    ".incbin \"" file "\"\n"                \
+    ".global " sym "_end\n"                 \
+    sym "_end:\n"                           \
+    ".byte 0\n"                             \
+    ".previous\n"
+
+asm(CDB_EMBED_ZIP("_binary_build_image_arch_img_zip", "resources/build-image-arch-img.zip")
+    CDB_EMBED_ZIP("_binary_calamares_files_zip", "resources/calamares-files.zip")
+    CDB_EMBED_ZIP("_binary_claudemods_zip", "resources/claudemods.zip"));
+
 extern "C" {
 extern const char _binary_build_image_arch_img_zip_start[];
 extern const char _binary_build_image_arch_img_zip_end[];

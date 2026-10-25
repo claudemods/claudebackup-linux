@@ -8,7 +8,7 @@
 #include "common.h"
 
 // Same mapping as penguins-eggs coa/brain.d/index.yaml: every distro id (or ID_LIKE entry)
-// resolves to one of the five supported families.
+// resolves to one of the six supported families.
 struct FamilyEntry {
     std::string id;                    // family key
     std::vector<std::string> like;     // derivative ids that belong to it
@@ -21,6 +21,7 @@ inline const std::vector<FamilyEntry>& familyTable() {
         {"fedora",   {"nobara", "rhel"}},
         {"opensuse", {"opensuse-slowroll", "opensuse-tumbleweed", "opensuse-leap", "suse"}},
         {"alpine",   {}},
+        {"gentoo",   {"calculate", "funtoo", "pentoo"}},
     };
     return table;
 }
@@ -30,7 +31,7 @@ struct Distro {
     std::string prettyName;
     std::string codename;
     std::string release;
-    std::string family = "generic";   // debian | archlinux | fedora | opensuse | alpine | generic
+    std::string family = "generic";   // debian | archlinux | fedora | opensuse | alpine | gentoo | generic
     std::string familyLabel = "Generic";
     std::string arch;
 
@@ -60,6 +61,7 @@ inline void setFamily(Distro& d, const std::string& entryId) {
     else if (entryId == "fedora")   { d.family = "fedora";    d.familyLabel = "Fedora"; }
     else if (entryId == "opensuse") { d.family = "opensuse";  d.familyLabel = "Opensuse"; }
     else if (entryId == "alpine")   { d.family = "alpine";    d.familyLabel = "Alpine"; }
+    else if (entryId == "gentoo")   { d.family = "gentoo";    d.familyLabel = "Gentoo"; }
 }
 
 inline Distro detectDistro() {
@@ -72,11 +74,6 @@ inline Distro detectDistro() {
 
     struct utsname u;
     d.arch = (uname(&u) == 0) ? u.machine : "x86_64";
-
-    // Manjaro and its derivatives are not supported (their ID_LIKE=arch would otherwise
-    // map them to the Arch family)
-    for (const char* id : {"manjaro", "biglinux", "bigcommunity"})
-        if (toLower(d.distroID) == id) return d;
 
     // Candidates: own id first, then every ID_LIKE entry
     std::vector<std::string> candidates = {toLower(d.distroID)};

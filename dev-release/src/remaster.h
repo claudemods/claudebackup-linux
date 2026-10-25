@@ -81,6 +81,7 @@ inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
+    if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut";
     return "";
 }
 
@@ -94,17 +95,44 @@ inline bool prepareBootFiles(const Distro& d) {
     return native::ensureBootloaders();
 }
 
-// Arch only: installs Calamares from the embedded calamares-files.zip + claudemods.zip
-// (cmiadvanced extrainstalls.sh). Runs on the host, so the next ISO contains it.
+// Where each family's live initramfs leaves the squashfs during the live session (Calamares unpackfs)
+inline std::string calamaresUnpackSource(const Distro& d) {
+    if (d.family == "debian") return "/run/live/medium/live/filesystem.squashfs";                // live-boot
+    if (d.family == "fedora" || d.family == "opensuse" || d.family == "gentoo")
+        return "/run/initramfs/live/LiveOS/squashfs.img";                                       // dracut dmsquash-live
+    if (d.family == "alpine") return "/lib/live/mount/medium/live/filesystem.squashfs";         // CDB-SIDECAR
+    return "";
+}
+
+inline std::string unzipInstallCommand(const Distro& d) {
+    if (d.family == "debian")   return "apt-get install -y unzip";
+    if (d.family == "fedora")   return "dnf install -y unzip";
+    if (d.family == "opensuse") return "zypper --non-interactive install unzip";
+    if (d.family == "alpine")   return "apk add unzip";
+    if (d.family == "gentoo")   return "emerge --noreplace --ask=n app-arch/unzip";
+    return "pacman -S --needed --noconfirm unzip";
+}
+
+// Installs Calamares on the host so the next ISO contains it.
+//   Arch: the embedded calamares-files.zip + claudemods.zip (cmiadvanced extrainstalls.sh)
+//   others: the distro's calamares package + claudemods branding and a full-clone config
 inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
-    if (d.family != "archlinux") { logError("Calamares setup is only available for the Arch family."); return false; }
-    if (!commandExists("unzip")) { logError("unzip is not installed (use Setup > Install Needed Tools)"); return false; }
+    if (!d.supported()) { logError("Calamares setup needs a supported distro."); return false; }
+    if (!commandExists("unzip")) {
+        logNormal("Installing unzip...");
+        runCommand(unzipInstallCommand(d));
+        if (!commandExists("unzip")) { logError("unzip is not installed."); return false; }
+    }
 
     const std::string dir = STAGING_DIR + "/calamares";
     runCommand("rm -rf " + shq(dir));
     bool ok = resources::extract(resources::Zip::CalamaresFiles, dir) &&
               resources::extract(resources::Zip::Claudemods, dir + "/calamares-files");
-    if (ok) ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0", erofs ? "1" : "0"}) == 0;
+    if (ok && d.family == "archlinux")
+        ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0", erofs ? "1" : "0"}) == 0;
+    else if (ok)
+        ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP_GENERIC), "",
+                              {d.family, dir, btrfs ? "1" : "0", calamaresUnpackSource(d), toLower(d.distroID)}) == 0;
     runCommand("rm -rf " + shq(dir));
     return ok;
 }

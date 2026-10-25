@@ -38,6 +38,8 @@ inline std::string bootParams(const Context& c) {
         return "label=" + c.isoTag;
     if (f == "fedora" || f == "opensuse")
         return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.shell rd.debug selinux=0 cow_spacesize=2G";
+    if (f == "gentoo")
+        return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.live.overlay.overlayfs=1 rd.shell";
     if (f == "alpine")
         return "modules=loop,squashfs,sd-mod,usb-storage alpinelivelabel=" + LIVE_LABEL + " alpinelivesquashfs=filesystem.squashfs cow_spacesize=2G quiet";
     return "";
@@ -232,6 +234,52 @@ dracut -f --no-hostonly --add "dmsquash-live livenet" --add-drivers "sr_mod iso9
 )CDB";
 }
 
+// Gentoo: dracut dmsquash-live, like Fedora. Kernels are often hand-configured, so first check
+// that the ones the live boot needs exist (as a module or built in) and say which option is missing.
+inline std::string initramfsGentoo() {
+    return R"CDB(#!/bin/bash
+set -e
+# gentoo: initramfs
+KERNEL_VERSION=$(uname -r)
+if [ ! -d "/lib/modules/$KERNEL_VERSION" ]; then
+    KERNEL_VERSION=$(ls -1 /lib/modules 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -n 1)
+fi
+echo "-> Generating live initramfs Gentoo ($KERNEL_VERSION)..."
+
+if ! command -v dracut >/dev/null 2>&1; then
+    echo "[FATAL ERROR] dracut is not installed (emerge sys-kernel/dracut)."
+    exit 1
+fi
+if [ ! -d /usr/lib/dracut/modules.d/90dmsquash-live ]; then
+    echo "[FATAL ERROR] the dracut dmsquash-live module is missing (re-emerge sys-kernel/dracut)."
+    exit 1
+fi
+
+has_mod() {
+    modinfo -k "$KERNEL_VERSION" "$1" >/dev/null 2>&1 ||
+        grep -qs "/$1.ko" "/lib/modules/$KERNEL_VERSION/modules.builtin"
+}
+MISSING=""
+has_mod squashfs || MISSING="$MISSING CONFIG_SQUASHFS"
+has_mod overlay  || MISSING="$MISSING CONFIG_OVERLAY_FS"
+has_mod isofs    || MISSING="$MISSING CONFIG_ISO9660_FS"
+has_mod loop     || MISSING="$MISSING CONFIG_BLK_DEV_LOOP"
+if [ -n "$MISSING" ]; then
+    echo "[FATAL ERROR] kernel $KERNEL_VERSION cannot boot a live ISO, enable (=m or =y):$MISSING"
+    echo "              then rebuild and install the kernel and run the build again."
+    exit 1
+fi
+
+DRIVERS="iso9660 squashfs loop overlay"
+has_mod sr_mod && DRIVERS="sr_mod $DRIVERS"
+dracut -f --no-hostonly --add "dmsquash-live" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img
+if [ ! -f /boot/cdb-initrd.img ]; then
+    echo "[FATAL ERROR] /boot/cdb-initrd.img was not generated!"
+    exit 1
+fi
+)CDB";
+}
+
 // Alpine: patches the stock initramfs-init with a "sidecar" that mounts the live medium
 // when Alpine's own boot fails, then rebuilds with mkinitfs. (oa-alpine-mkinitfs-custom)
 inline std::string initramfsAlpine() {
@@ -325,6 +373,7 @@ inline std::string initramfsCmd(const Context& c) {
     if (f == "fedora")   return initramfsFedora();
     if (f == "opensuse") return initramfsOpensuse();
     if (f == "alpine")   return initramfsAlpine();
+    if (f == "gentoo")   return initramfsGentoo();
     return "";
 }
 
@@ -457,6 +506,44 @@ mkdir -p "$ISODIR/live"
 cp "$LIVEROOT/boot/vmlinuz-$FLAVOR" "$ISODIR/live/vmlinuz"
 cp "$LIVEROOT/boot/initramfs-cdb" "$ISODIR/live/initrd.img"
 )CDB";
+    } else if (f == "gentoo") {
+        // installkernel (vmlinuz-*), genkernel (kernel-*), dist-kernel / kernel-install
+        // (/usr/lib/modules/*/vmlinuz) and a plain "make" in /usr/src
+        s += R"CDB(
+KERNEL_VERSION=$(uname -r)
+if [ ! -d "$LIVEROOT/lib/modules/$KERNEL_VERSION" ]; then
+    KERNEL_VERSION=$(ls -1 "$LIVEROOT/lib/modules" 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -n 1)
+fi
+echo "-> Copying Kernel and Initramfs Gentoo ($KERNEL_VERSION)..."
+
+KERNEL_SRC=""
+for k in "$LIVEROOT/boot/vmlinuz-$KERNEL_VERSION" \
+         "$LIVEROOT/boot/kernel-$KERNEL_VERSION" \
+         "$LIVEROOT/boot/kernel-genkernel-$(uname -m)-$KERNEL_VERSION" \
+         "$LIVEROOT/usr/lib/modules/$KERNEL_VERSION/vmlinuz" \
+         "$LIVEROOT/usr/src/linux-$KERNEL_VERSION/arch/x86/boot/bzImage" \
+         "$LIVEROOT/usr/src/linux-$KERNEL_VERSION/arch/arm64/boot/Image"; do
+    if [ -f "$k" ]; then KERNEL_SRC="$k"; break; fi
+done
+if [ -z "$KERNEL_SRC" ]; then
+    KERNEL_SRC=$(find "$LIVEROOT/boot" -maxdepth 1 -type f \( -name "vmlinuz-*" -o -name "kernel-*" \) | sort -V | tail -n 1)
+fi
+if [ -z "$KERNEL_SRC" ] || [ ! -f "$KERNEL_SRC" ]; then
+    echo "[FATAL ERROR] Kernel for $KERNEL_VERSION not found in $LIVEROOT/boot, /usr/lib/modules or /usr/src!"
+    exit 1
+fi
+if [ ! -f "$LIVEROOT/boot/cdb-initrd.img" ]; then
+    echo "[FATAL ERROR] cdb-initrd.img not found in $LIVEROOT/boot! dracut did not generate it."
+    exit 1
+fi
+
+echo "-> Copying from: $KERNEL_SRC"
+mkdir -p "$ISODIR/live"
+cp "$KERNEL_SRC" "$ISODIR/live/vmlinuz"
+cp "$LIVEROOT/boot/cdb-initrd.img" "$ISODIR/live/initrd.img"
+rm -f "$LIVEROOT/boot/cdb-initrd.img"
+echo "-> Copy completed."
+)CDB";
     }
     return s;
 }
@@ -477,7 +564,7 @@ inline std::string hookSquashfsCmd(const Context& c) {
                "echo \"-> Writing rootfs.img.sha512...\"\n"
                "sha512sum rootfs.img > rootfs.img.sha512\n";
     }
-    if (f == "fedora")
+    if (f == "fedora" || f == "gentoo")
         return "set -e\nmkdir -p " + iso + "/LiveOS\n" + wait + "ln -f " + sq + " " + iso + "/LiveOS/squashfs.img\n";
     if (f == "opensuse")
         return "set -e\nmkdir -p " + iso + "/LiveOS\nln -f " + sq + " " + iso + "/LiveOS/squashfs.img\n";

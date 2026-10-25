@@ -184,8 +184,8 @@ std::string statusBlock() {
     if (d.family == "archlinux") {
         s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
         s += checkLine(true, "Image Format: " + mcfg.imageFormat + (mcfg.imageFormat == "erofs" ? " (mkfs.erofs zstd)" : ""));
-        s += checkLine(commandExists("calamares"), "Calamares");
     }
+    if (d.supported()) s += checkLine(commandExists("calamares"), "Calamares");
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
@@ -218,7 +218,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
     while (std::getline(ascii_stream, line)) menuBuffer += COLOR_RED + line + COLOR_RESET + "\n";
 
     menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + "\n";
-    menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Fedora, openSUSE, Alpine" + COLOR_RESET + "\n";
+    menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Fedora, openSUSE, Alpine, Gentoo" + COLOR_RESET + "\n";
     {
         std::lock_guard<std::mutex> lock(time_mutex);
         menuBuffer += COLOR_GREEN + "Current Time: " + current_time_str + COLOR_RESET + "\n";
@@ -297,6 +297,7 @@ void showGuide() {
         "1. Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl\n"
         "                                     plus your distro's live-boot packages\n"
         "                                     (Arch: unzip, erofs-utils, mkinitcpio, device-mapper, gnupg)\n"
+        "                                     (Gentoo: emerge ... sys-kernel/dracut)\n"
         "2. Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files\n"
         "                                     (Arch: not needed, the claudemods zip is built in)\n"
         "3. Setup > ISO Name, Work Directory, Output Directory, Clone Directory\n"
@@ -306,9 +307,12 @@ void showGuide() {
         "   Setup > Image Format (Arch)       squashfs, or erofs (mkfs.erofs -zzstd -C 65536\n"
         "                                     --chunksize 65536, kernel 6.10+ for erofs zstd)\n"
         "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
-        "6. Setup > Install Calamares (Arch)  claudemods Calamares, ext4 or btrfs zstd:22,\n"
-        "                                     squashfs or erofs image (match Image Format);\n"
-        "                                     do this BEFORE building so the ISO contains it\n"
+        "6. Setup > Install Calamares         ext4 or btrfs zstd:22, claudemods branding;\n"
+        "                                     Arch: the claudemods zip packages, squashfs or erofs\n"
+        "                                     (match Image Format). Other distros: your repo's\n"
+        "                                     calamares package + a full-clone config (no users\n"
+        "                                     page, GRUB, initramfs-tools / dracut / mkinitfs).\n"
+        "                                     Do this BEFORE building so the ISO contains it\n"
         "7. Detected System And Build Steps   check your distro says 'Support: yes'\n"
         "8. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
         "                                     initramfs, kernel, squashfs, ISO\n"
@@ -319,7 +323,8 @@ void showGuide() {
         "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks - with the\n"
         "original cmiadvanced mksquashfs and xorriso commands. Setup > Set ISO Tag sets the\n"
         "volume label the live system boots from (default 2026).\n"
-        "Manjaro is not supported.\n\n"
+        "Gentoo: dracut dmsquash-live; your kernel needs CONFIG_SQUASHFS, CONFIG_OVERLAY_FS,\n"
+        "CONFIG_ISO9660_FS and CONFIG_BLK_DEV_LOOP (=m or =y) - the build tells you if one is off.\n\n"
         "Free space needed is roughly twice the size of the finished ISO.\n"
         "Fedora: run 'sudo setenforce 0' before building.\n"
         "Log: " << LOG_FILE << COLOR_RESET << "\n";
@@ -411,7 +416,7 @@ void showSetupMenu() {
         "Toggle RAM Mode Boot Entry",
         "Set ISO Tag (Arch volume label, default 2026)",
         "Set Image Format (Arch: squashfs / erofs)",
-        "Install Calamares (Arch: ext4 / btrfs zstd:22)",
+        "Install Calamares (ext4 / btrfs zstd:22)",
         "Back to Main Menu"
     };
     int selected = 0;
@@ -490,8 +495,8 @@ void showSetupMenu() {
             }
             case 11: {
                 Distro d = detectDistro();
-                if (d.family != "archlinux") {
-                    std::cout << COLOR_RED << "Calamares setup is only available for the Arch family." << COLOR_RESET << std::endl;
+                if (!d.supported()) {
+                    std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
                     pressAnyKey();
                     break;
                 }
@@ -499,12 +504,15 @@ void showSetupMenu() {
                           << "1) Default configuration (Ext4)\n"
                           << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
                 bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
-                std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
-                          << "1) Default Cloned Squashfs System\n"
-                          << "2) Erofs Cloned System Image\n"
-                          << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
-                std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
-                bool erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
+                bool erofs = false;   // only Arch can build an erofs image
+                if (d.family == "archlinux") {
+                    std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
+                              << "1) Default Cloned Squashfs System\n"
+                              << "2) Erofs Cloned System Image\n"
+                              << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
+                    std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
+                    erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
+                }
                 if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
                 else logError("Calamares setup failed.");
                 pressAnyKey();

@@ -285,6 +285,259 @@ done
 echo "-> Calamares installed (kernel preset: $PKGBASE). It installs from /run/arch/bootmnt/LiveOS/rootfs.img."
 )CDB";
 
+// Every other family: the distro's own Calamares package, configured for a full-system clone
+// (no users page - the clone keeps its users) with the claudemods branding, unpacking the live
+// squashfs. Runs on the host, so the next ISO contains it.
+// $1 family, $2 extracted zips dir, $3 = 1 for btrfs zstd:22, $4 squashfs path in the live
+// session, $5 os-release ID (EFI boot entry name)
+inline const char* CALAMARES_SETUP_GENERIC = R"CDB(#!/bin/bash
+set -e
+
+FAMILY="$1"
+SRC="$2/calamares-files"
+BTRFS="${3:-0}"
+UNPACK="$4"
+DISTRO_ID="${5:-linux}"
+ARCH=$(uname -m)
+
+pkg_install() {
+    if ! "$@"; then
+        echo "[FATAL ERROR] package install failed: $*"
+        echo "              Calamares may not be packaged for this release - enable the repository"
+        echo "              that has it (e.g. universe, community, testing) and try again."
+        exit 1
+    fi
+}
+
+echo "-> Installing Calamares, GRUB and rsync for $FAMILY..."
+case "$FAMILY" in
+    debian)
+        PKGS="calamares rsync efibootmgr dosfstools"
+        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub-pc-bin grub-efi-amd64-bin"
+        apt-get update || true
+        pkg_install apt-get install -y $PKGS
+        GRUB=grub; INITRAMFS=initramfs ;;
+    fedora)
+        PKGS="calamares rsync efibootmgr dosfstools"
+        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-pc-modules grub2-efi-x64-modules"
+        pkg_install dnf install -y $PKGS
+        GRUB=grub2; INITRAMFS=dracut ;;
+    opensuse)
+        PKGS="calamares rsync efibootmgr dosfstools"
+        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-i386-pc grub2-x86_64-efi"
+        pkg_install zypper --non-interactive install $PKGS
+        GRUB=grub2; INITRAMFS=dracut ;;
+    alpine)
+        PKGS="calamares rsync grub efibootmgr dosfstools python3"
+        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub-bios grub-efi"
+        pkg_install apk add $PKGS
+        # Alpine splits the Calamares modules into calamares-mod-* subpackages
+        MODS=$(apk search -q 'calamares-mod-*' 2>/dev/null | tr '\n' ' ')
+        if [ -n "$MODS" ]; then pkg_install apk add $MODS; fi
+        GRUB=grub; INITRAMFS=shellprocess@cdbalpine ;;
+    gentoo)
+        pkg_install emerge --noreplace --ask=n app-admin/calamares net-misc/rsync sys-boot/grub sys-boot/efibootmgr sys-fs/dosfstools
+        GRUB=grub; INITRAMFS=dracut ;;
+    *)
+        echo "[FATAL ERROR] no Calamares setup for family '$FAMILY'."
+        exit 1 ;;
+esac
+if ! command -v calamares >/dev/null 2>&1; then
+    echo "[FATAL ERROR] calamares was not installed."
+    exit 1
+fi
+
+CFG=/etc/calamares
+MOD=$CFG/modules
+if [ -d "$CFG" ] && [ ! -d "$CFG.orig" ]; then
+    echo "-> Keeping the distro's Calamares config in $CFG.orig"
+    mv "$CFG" "$CFG.orig"
+fi
+rm -rf "$CFG"
+mkdir -p "$MOD" "$CFG/scripts"
+
+echo "-> Copying claudemods branding..."
+mkdir -p /usr/share/calamares/branding
+rm -rf /usr/share/calamares/branding/claudemods
+cp -r "$SRC/claudemods" /usr/share/calamares/branding/
+
+SYSTEMD=0
+[ -d /run/systemd/system ] && SYSTEMD=1
+
+# --- settings.conf ---------------------------------------------------------
+EXEC=(partition mount unpackfs)
+[ "$SYSTEMD" = 1 ] && EXEC+=(machineid)
+EXEC+=(fstab locale keyboard)
+[ "$FAMILY" != alpine ] && EXEC+=(localecfg)
+EXEC+=("$INITRAMFS")
+[ "$FAMILY" != alpine ] && EXEC+=(grubcfg)
+EXEC+=(bootloader umount)
+{
+    echo "---"
+    echo "modules-search: [ local ]"
+    if [ "$FAMILY" = alpine ]; then
+        echo "instances:"
+        echo "- id: cdbalpine"
+        echo "  module: shellprocess"
+        echo "  config: shellprocess_cdbalpine.conf"
+    fi
+    echo "sequence:"
+    echo "- show:"
+    for m in welcome locale keyboard partition summary; do echo "  - $m"; done
+    echo "- exec:"
+    for m in "${EXEC[@]}"; do echo "  - $m"; done
+    echo "- show:"
+    echo "  - finished"
+    echo "branding: claudemods"
+    echo "prompt-install: true"
+    echo "dont-chroot: false"
+    echo "oem-setup: false"
+    echo "disable-cancel: false"
+    echo "disable-cancel-during-exec: true"
+    echo "quit-at-end: false"
+} > "$CFG/settings.conf"
+
+# --- module configs ---------------------------------------------------------
+FSTYPE=ext4
+[ "$BTRFS" = 1 ] && FSTYPE=btrfs
+
+cat > "$MOD/unpackfs.conf" << EOF
+---
+unpack:
+    - source: "$UNPACK"
+      sourcefs: "squashfs"
+      destination: ""
+EOF
+
+cat > "$MOD/partition.conf" << EOF
+---
+efiSystemPartition: "/boot/efi"
+userSwapChoices:
+    - none
+    - small
+    - file
+initialPartitioningChoice: erase
+initialSwapChoice: none
+defaultFileSystemType: "$FSTYPE"
+availableFileSystemTypes: ["ext4","btrfs","xfs"]
+EOF
+
+# Same mount.conf as Arch (btrfs subvolumes); compress=zstd:22 only when btrfs was chosen
+cp -f "$SRC/mount.conf" "$MOD/mount.conf"
+if [ "$BTRFS" != 1 ]; then
+    sed -i 's/, compress=zstd:22//' "$MOD/mount.conf"
+fi
+
+# Calamares 3.2 reads mount options from fstab.conf (3.3 ignores these keys)
+BTRFS_OPTS="defaults,noatime"
+[ "$BTRFS" = 1 ] && BTRFS_OPTS="defaults,noatime,compress=zstd:22"
+cat > "$MOD/fstab.conf" << EOF
+---
+mountOptions:
+    default: defaults,noatime
+    btrfs: $BTRFS_OPTS
+ssdExtraMountOptions:
+    ext4: discard
+    btrfs: discard
+crypttabOptions: luks
+EOF
+
+cat > "$MOD/bootloader.conf" << EOF
+---
+efiBootLoader: "grub"
+timeout: "10"
+grubInstall: "$GRUB-install"
+grubMkconfig: "$GRUB-mkconfig"
+grubCfg: "/boot/$GRUB/grub.cfg"
+grubProbe: "$GRUB-probe"
+efiBootMgr: "efibootmgr"
+efiBootloaderId: "$DISTRO_ID"
+installEFIFallback: true
+EOF
+
+cat > "$MOD/grubcfg.conf" << EOF
+---
+overwrite: false
+keepDistributor: true
+EOF
+
+cat > "$MOD/initramfs.conf" << EOF
+---
+kernel: all
+EOF
+
+echo "---" > "$MOD/dracut.conf"
+
+cat > "$MOD/machineid.conf" << EOF
+---
+systemd: true
+dbus: true
+dbus-symlink: true
+EOF
+
+REBOOT="reboot"
+[ "$SYSTEMD" = 1 ] && REBOOT="systemctl -i reboot"
+cat > "$MOD/finished.conf" << EOF
+---
+restartNowEnabled: true
+restartNowChecked: false
+restartNowCommand: "$REBOOT"
+EOF
+
+cat > "$MOD/welcome.conf" << EOF
+---
+showSupportUrl: false
+showKnownIssuesUrl: false
+showReleaseNotesUrl: false
+requirements:
+    requiredStorage: 10
+    requiredRam: 1.0
+    check:
+        - storage
+        - ram
+        - root
+    required:
+        - storage
+        - root
+EOF
+
+# Alpine: no systemd, no locale-gen, mkinitfs instead of dracut, and GRUB needs Alpine's
+# modules=/rootfstype= kernel line. Runs inside the installed system.
+if [ "$FAMILY" = alpine ]; then
+    cat > "$CFG/scripts/cdb-alpine-target.sh" << 'EOF'
+#!/bin/sh
+set -e
+FS=$(awk '$2=="/"{fs=$3} END{print fs}' /proc/mounts)
+[ -z "$FS" ] && FS=ext4
+CONF=/etc/mkinitfs/mkinitfs.conf
+if [ -f "$CONF" ] && ! grep -q "$FS" "$CONF"; then
+    sed -i "s/^features=\"/features=\"$FS /" "$CONF"
+fi
+KVER=$(ls -1 /lib/modules | head -n 1)
+mkinitfs "$KVER"
+CMDLINE="modules=sd-mod,usb-storage,$FS quiet rootfstype=$FS"
+mkdir -p /etc/default
+touch /etc/default/grub
+if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"|" /etc/default/grub
+else
+    echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"" >> /etc/default/grub
+fi
+grep -q '^GRUB_TIMEOUT=' /etc/default/grub || echo "GRUB_TIMEOUT=5" >> /etc/default/grub
+EOF
+    chmod 755 "$CFG/scripts/cdb-alpine-target.sh"
+    cat > "$MOD/shellprocess_cdbalpine.conf" << EOF
+---
+dontChroot: false
+timeout: 900
+script:
+    - "/etc/calamares/scripts/cdb-alpine-target.sh"
+EOF
+fi
+
+echo "-> Calamares configured for $FAMILY (unpacks $UNPACK, $FSTYPE default, $GRUB bootloader)."
+)CDB";
+
 // Applies the build-time constants to an embedded script
 inline std::string render(const char* script) {
     std::string s = script;
