@@ -285,7 +285,8 @@ done
 echo "-> Calamares installed (kernel preset: $PKGBASE). It installs from /run/arch/bootmnt/LiveOS/rootfs.img."
 )CDB";
 
-// Every other family: the distro's own Calamares package, configured for a full-system clone
+// Debian, Fedora, openSUSE, Gentoo (Calamares does not run on Alpine): the distro's own
+// Calamares package, configured for a full-system clone
 // (no users page - the clone keeps its users) with the claudemods branding, unpacking the live
 // squashfs. Runs on the host, so the next ISO contains it.
 // $1 family, $2 extracted zips dir, $3 = 1 for btrfs zstd:22, $4 squashfs path in the live
@@ -304,7 +305,7 @@ pkg_install() {
     if ! "$@"; then
         echo "[FATAL ERROR] package install failed: $*"
         echo "              Calamares may not be packaged for this release - enable the repository"
-        echo "              that has it (e.g. universe, community, testing) and try again."
+        echo "              that has it (e.g. Ubuntu universe) and try again."
         exit 1
     fi
 }
@@ -327,14 +328,6 @@ case "$FAMILY" in
         [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-i386-pc grub2-x86_64-efi"
         pkg_install zypper --non-interactive install $PKGS
         GRUB=grub2; INITRAMFS=dracut ;;
-    alpine)
-        PKGS="calamares rsync grub efibootmgr dosfstools python3"
-        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub-bios grub-efi"
-        pkg_install apk add $PKGS
-        # Alpine splits the Calamares modules into calamares-mod-* subpackages
-        MODS=$(apk search -q 'calamares-mod-*' 2>/dev/null | tr '\n' ' ')
-        if [ -n "$MODS" ]; then pkg_install apk add $MODS; fi
-        GRUB=grub; INITRAMFS=shellprocess@cdbalpine ;;
     gentoo)
         pkg_install emerge --noreplace --ask=n app-admin/calamares net-misc/rsync sys-boot/grub sys-boot/efibootmgr sys-fs/dosfstools
         GRUB=grub; INITRAMFS=dracut ;;
@@ -354,7 +347,7 @@ if [ -d "$CFG" ] && [ ! -d "$CFG.orig" ]; then
     mv "$CFG" "$CFG.orig"
 fi
 rm -rf "$CFG"
-mkdir -p "$MOD" "$CFG/scripts"
+mkdir -p "$MOD"
 
 echo "-> Copying claudemods branding..."
 mkdir -p /usr/share/calamares/branding
@@ -365,27 +358,18 @@ SYSTEMD=0
 [ -d /run/systemd/system ] && SYSTEMD=1
 
 # --- settings.conf ---------------------------------------------------------
-EXEC=(partition mount unpackfs)
-[ "$SYSTEMD" = 1 ] && EXEC+=(machineid)
-EXEC+=(fstab locale keyboard)
-[ "$FAMILY" != alpine ] && EXEC+=(localecfg)
-EXEC+=("$INITRAMFS")
-[ "$FAMILY" != alpine ] && EXEC+=(grubcfg)
-EXEC+=(bootloader umount)
+# Plain sh word list (runs under /bin/sh when bash is not installed)
+EXEC="partition mount unpackfs"
+[ "$SYSTEMD" = 1 ] && EXEC="$EXEC machineid"
+EXEC="$EXEC fstab locale keyboard localecfg $INITRAMFS grubcfg bootloader umount"
 {
     echo "---"
     echo "modules-search: [ local ]"
-    if [ "$FAMILY" = alpine ]; then
-        echo "instances:"
-        echo "- id: cdbalpine"
-        echo "  module: shellprocess"
-        echo "  config: shellprocess_cdbalpine.conf"
-    fi
     echo "sequence:"
     echo "- show:"
     for m in welcome locale keyboard partition summary; do echo "  - $m"; done
     echo "- exec:"
-    for m in "${EXEC[@]}"; do echo "  - $m"; done
+    for m in $EXEC; do echo "  - $m"; done
     echo "- show:"
     echo "  - finished"
     echo "branding: claudemods"
@@ -501,14 +485,101 @@ requirements:
         - root
 EOF
 
-# Alpine: no systemd, no locale-gen, mkinitfs instead of dracut, and GRUB needs Alpine's
-# modules=/rootfstype= kernel line. Runs inside the installed system.
-if [ "$FAMILY" = alpine ]; then
-    cat > "$CFG/scripts/cdb-alpine-target.sh" << 'EOF'
-#!/bin/sh
-set -e
-FS=$(awk '$2=="/"{fs=$3} END{print fs}' /proc/mounts)
-[ -z "$FS" ] && FS=ext4
+echo "-> Calamares configured for $FAMILY (unpacks $UNPACK, $FSTYPE default, $GRUB bootloader)."
+)CDB";
+
+// Alpine (Calamares does not run there): installs the cloned system from the live ISO back onto a
+// disk - not a fresh setup-alpine install. Run from the live session. Plain sh (BusyBox).
+// $1 target disk (/dev/sda, /dev/nvme0n1, ...), $2 ext4 | btrfs, $3 = 1 for btrfs compress=zstd:22
+inline const char* ALPINE_INSTALLER = R"CDB(
+DISK="$1"
+FS="${2:-ext4}"
+COMPRESS="${3:-0}"
+T=/mnt/cdb-target
+LIVE_ROOT=/lib/live/mount/rootfs/filesystem.squashfs        # mounted by the CDB-SIDECAR
+LIVE_SQ=/lib/live/mount/medium/live/filesystem.squashfs
+
+fail() { echo "[FATAL ERROR] $*"; exit 1; }
+
+[ -b "$DISK" ] || fail "$DISK is not a disk."
+if [ ! -d "$LIVE_ROOT/etc" ] && [ ! -f "$LIVE_SQ" ]; then
+    fail "the cloned system was not found - run this from the claudebackup live ISO."
+fi
+MEDIUM=$(awk '$2=="/lib/live/mount/medium"{print $1}' /proc/mounts | head -n 1)
+case "$MEDIUM" in "$DISK"*) fail "$DISK holds the live ISO you booted from." ;; esac
+for tool in sfdisk mkfs.vfat grub-install grub-mkconfig mkinitfs; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is missing - run Setup > Alpine Installer Tools before building the ISO."
+done
+MKFS=mkfs.ext4
+[ "$FS" = btrfs ] && MKFS=mkfs.btrfs
+command -v "$MKFS" >/dev/null 2>&1 || fail "$MKFS is missing - run Setup > Alpine Installer Tools before building the ISO."
+
+UEFI=0
+[ -d /sys/firmware/efi ] && UEFI=1
+case "$DISK" in *[0-9]) P="${DISK}p" ;; *) P="$DISK" ;; esac
+
+cleanup() {
+    for m in sys/firmware/efi/efivars dev proc sys boot/efi ""; do
+        mountpoint -q "$T/$m" 2>/dev/null && umount "$T/$m" 2>/dev/null
+    done
+    sync
+}
+trap cleanup EXIT
+
+echo "-> Partitioning $DISK ($([ "$UEFI" = 1 ] && echo UEFI/GPT || echo BIOS/MBR))..."
+for p in $(awk '{print $1}' /proc/mounts | grep "^$DISK"); do umount "$p" 2>/dev/null || true; done
+if [ "$UEFI" = 1 ]; then
+    printf 'label: gpt\nsize=512M, type=U\ntype=L\n' | sfdisk --wipe always "$DISK"
+    ESP="${P}1"; ROOT="${P}2"
+else
+    printf 'label: dos\ntype=83, bootable\n' | sfdisk --wipe always "$DISK"
+    ESP=""; ROOT="${P}1"
+fi
+mdev -s 2>/dev/null || true
+for i in 1 2 3 4 5 6 7 8 9 10; do [ -b "$ROOT" ] && break; sleep 1; done
+[ -b "$ROOT" ] || fail "$ROOT did not appear after partitioning."
+
+echo "-> Creating filesystems..."
+if [ "$FS" = btrfs ]; then mkfs.btrfs -f "$ROOT"; else mkfs.ext4 -F "$ROOT"; fi
+if [ -n "$ESP" ]; then mkfs.vfat -F 32 "$ESP"; fi
+
+OPTS=defaults
+[ "$FS" = btrfs ] && [ "$COMPRESS" = 1 ] && OPTS="defaults,compress=zstd:22"
+mkdir -p "$T"
+mount -o "$OPTS" "$ROOT" "$T"
+if [ -n "$ESP" ]; then mkdir -p "$T/boot/efi"; mount "$ESP" "$T/boot/efi"; fi
+
+echo "-> Copying the cloned system (this takes a while)..."
+if [ -d "$LIVE_ROOT/etc" ]; then
+    cp -a "$LIVE_ROOT/." "$T/"
+else
+    unsquashfs -f -d "$T" "$LIVE_SQ"
+fi
+for d in proc sys dev run tmp mnt media; do mkdir -p "$T/$d"; done
+chmod 1777 "$T/tmp"
+
+# /boot may have been a separate partition on the original system: keep the live kernel then
+FLAVOR=$(uname -r | awk -F- '{print $NF}')
+if ! ls "$T"/boot/vmlinuz-* >/dev/null 2>&1; then
+    echo "-> No kernel in the clone's /boot, copying the live kernel..."
+    mkdir -p "$T/boot"
+    cp /lib/live/mount/medium/live/vmlinuz "$T/boot/vmlinuz-$FLAVOR"
+fi
+
+echo "-> Writing /etc/fstab..."
+uuid() { blkid "$1" | sed -n 's/.* UUID="\([^"]*\)".*/\1/p'; }
+echo "UUID=$(uuid "$ROOT")	/	$FS	$OPTS	0 1" > "$T/etc/fstab"
+if [ -n "$ESP" ]; then
+    echo "UUID=$(uuid "$ESP")	/boot/efi	vfat	defaults	0 2" >> "$T/etc/fstab"
+fi
+
+echo "-> Installing the boot loader..."
+for d in proc sys dev; do mount --bind "/$d" "$T/$d"; done
+if [ "$UEFI" = 1 ]; then
+    mount -t efivarfs efivarfs "$T/sys/firmware/efi/efivars" 2>/dev/null || true
+fi
+chroot "$T" /bin/sh -e -s "$FS" "$UEFI" "$DISK" << 'CHROOT'
+FS="$1"; UEFI="$2"; DISK="$3"
 CONF=/etc/mkinitfs/mkinitfs.conf
 if [ -f "$CONF" ] && ! grep -q "$FS" "$CONF"; then
     sed -i "s/^features=\"/features=\"$FS /" "$CONF"
@@ -524,18 +595,16 @@ else
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"" >> /etc/default/grub
 fi
 grep -q '^GRUB_TIMEOUT=' /etc/default/grub || echo "GRUB_TIMEOUT=5" >> /etc/default/grub
-EOF
-    chmod 755 "$CFG/scripts/cdb-alpine-target.sh"
-    cat > "$MOD/shellprocess_cdbalpine.conf" << EOF
----
-dontChroot: false
-timeout: 900
-script:
-    - "/etc/calamares/scripts/cdb-alpine-target.sh"
-EOF
+if [ "$UEFI" = 1 ]; then
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable
+else
+    grub-install --target=i386-pc "$DISK"
 fi
+grub-mkconfig -o /boot/grub/grub.cfg
+CHROOT
 
-echo "-> Calamares configured for $FAMILY (unpacks $UNPACK, $FSTYPE default, $GRUB bootloader)."
+echo "-> The cloned system is installed on $DISK. Remove the live medium and reboot."
 )CDB";
 
 // Applies the build-time constants to an embedded script

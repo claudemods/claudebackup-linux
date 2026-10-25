@@ -195,7 +195,8 @@ std::string statusBlock() {
         s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
         s += checkLine(true, "Image Format: " + mcfg.imageFormat + (mcfg.imageFormat == "erofs" ? " (mkfs.erofs zstd)" : ""));
     }
-    if (d.supported()) s += checkLine(commandExists("calamares"), "Calamares");
+    if (remaster::calamaresAvailable(d)) s += checkLine(commandExists("calamares"), "Calamares");
+    if (d.family == "alpine") s += checkLine(remaster::alpineInstallerReady(), "Alpine Installer Tools");
     s += checkLine(!mcfg.isoName.empty(), "ISO Name: " + (mcfg.isoName.empty() ? std::string("Auto") : mcfg.isoName));
     s += checkLine(true, "Work Directory: " + (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir));
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
@@ -320,15 +321,18 @@ void showGuide() {
         "5. Setup > RAM Mode                  adds a 'toram' boot entry (Arch: copytoram=y)\n"
         "6. Setup > Install Calamares         ext4 or btrfs zstd:22, claudemods branding;\n"
         "                                     Arch: the claudemods zip packages, squashfs or erofs\n"
-        "                                     (match Image Format). Other distros: your repo's\n"
-        "                                     calamares package + a full-clone config (no users\n"
-        "                                     page, GRUB, initramfs-tools / dracut / mkinitfs).\n"
+        "                                     (match Image Format). Debian, Fedora, openSUSE,\n"
+        "                                     Gentoo: your repo's calamares package + a full-clone\n"
+        "                                     config (no users page, GRUB, initramfs-tools/dracut).\n"
+        "   Alpine: Setup > Alpine Installer Tools instead (Calamares does not run on Alpine);\n"
+        "   the live ISO then has 'Install Cloned System To Disk' in the main menu.\n"
         "                                     Do this BEFORE building so the ISO contains it\n"
         "7. Detected System And Build Steps   check your distro says 'Support: yes'\n"
         "8. Create Bootable ISO               mount, bootloaders, EFI image, boot menus,\n"
         "                                     initramfs, kernel, squashfs, ISO\n"
         "                                     (everything is unmounted at the end, even on Ctrl+C)\n"
-        "9. Install ISO To USB / Launch Calamares\n"
+        "9. Install ISO To USB / Launch Calamares (Alpine: Install Cloned System To Disk -\n"
+        "     your clone back on a disk, ext4 or btrfs, GRUB for UEFI or BIOS; not a fresh install)\n"
         "     USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n"
         "Arch family (Arch, CachyOS, ...): the ISO is built from the embedded claudemods zip -\n"
         "GRUB BIOS/UEFI tree, LiveOS/rootfs.img and the btrfs/ext4 mkinitcpio hooks - with the\n"
@@ -426,6 +430,7 @@ void installISOToUSB() {
 // Setup menu
 // ---------------------------------------------------------------------------
 void showSetupMenu() {
+    const bool alpine = detectDistro().family == "alpine";
     std::vector<std::string> items = {
         "Install Needed Tools",
         "Download Bootloaders",
@@ -438,7 +443,8 @@ void showSetupMenu() {
         "Toggle RAM Mode Boot Entry",
         "Set ISO Tag (Arch volume label, default 2026)",
         "Set Image Format (Arch: squashfs / erofs)",
-        "Install Calamares (ext4 / btrfs zstd:22)",
+        alpine ? "Alpine Installer Tools (to install the clone back to disk)"
+               : "Install Calamares (ext4 / btrfs zstd:22)",
         "Back to Main Menu"
     };
     int selected = 0;
@@ -522,6 +528,15 @@ void showSetupMenu() {
                     pressAnyKey();
                     break;
                 }
+                if (alpine) {
+                    // Calamares does not run on Alpine: install what our own installer needs
+                    std::string cmd = remaster::alpineInstallerToolsCommand(d);
+                    std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
+                    if (runCommand(cmd) == 0) logSuccess("Installer tools ready - build the ISO now so they are in the clone.");
+                    else logError("Installing the installer tools failed.");
+                    pressAnyKey();
+                    break;
+                }
                 std::cout << COLOR_GREEN << "Choose Calamares configuration for system install:\n"
                           << "1) Default configuration (Ext4)\n"
                           << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
@@ -546,9 +561,52 @@ void showSetupMenu() {
 }
 
 // ---------------------------------------------------------------------------
+// Alpine: install the cloned system from the live ISO back onto a disk (instead of Calamares)
+// ---------------------------------------------------------------------------
+void installClonedSystem() {
+    clearScreen();
+    std::cout << COLOR_CYAN << "Install Cloned System To Disk" << COLOR_RESET << "\n" << COLOR_GREEN
+              << "Puts this cloned system (users, settings, /home) onto a disk - not a fresh Alpine install.\n"
+              << "Run it from the live ISO." << COLOR_RESET << "\n\n";
+    if (!remaster::alpineInstallerReady()) {
+        std::cerr << COLOR_RED << "The installer tools are missing. On the original system run Setup > Alpine Installer Tools,\n"
+                  << "then build the ISO again." << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
+
+    std::cout << COLOR_CYAN << "Available drives:" << COLOR_RESET << std::endl;
+    if (commandExists("lsblk")) runCommand("lsblk -d -o NAME,SIZE,MODEL | grep -v loop");
+    else runCommand("grep -vE ' (loop|ram)[0-9]' /proc/partitions");
+    std::string disk = getUserInput("Enter target drive (e.g., /dev/sda): ");
+    if (!startsWith(disk, "/dev/")) {
+        std::cerr << COLOR_RED << "Invalid drive!" << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
+
+    std::cout << COLOR_GREEN << "Choose the filesystem:\n"
+              << "1) Ext4\n"
+              << "2) Btrfs with level 22 compression (zstd:22)\n"
+              << "3) Btrfs without compression" << COLOR_RESET << std::endl;
+    std::string f = getUserInput("Enter your choice (1, 2 or 3): ");
+    std::string fs = (f == "2" || f == "3") ? "btrfs" : "ext4";
+    bool compress = f == "2";
+
+    std::cout << COLOR_RED << "\nWARNING: This will erase EVERYTHING on " << disk << "!" << COLOR_RESET << std::endl;
+    std::string confirm = getUserInput("Type YES to install the cloned system on " + disk + ": ");
+    if (confirm != "YES") { std::cout << COLOR_CYAN << "Operation cancelled." << COLOR_RESET << std::endl; pressAnyKey(); return; }
+
+    if (remaster::installClonedSystemAlpine(disk, fs, compress)) logSuccess("Cloned system installed on " + disk + ". Remove the live medium and reboot.");
+    else logError("Installing the cloned system failed. See the messages above.");
+    pressAnyKey();
+}
+
+// ---------------------------------------------------------------------------
 // Main menu
 // ---------------------------------------------------------------------------
 void showMainMenu() {
+    const bool alpine = detectDistro().family == "alpine";
     std::vector<std::string> items = {
         "Guide",
         "Setup",
@@ -556,7 +614,7 @@ void showMainMenu() {
         "Create Bootable ISO",
         "Check Disk Usage",
         "Install ISO To USB",
-        "Launch Calamares",
+        alpine ? "Install Cloned System To Disk" : "Launch Calamares",
         "Exit"
     };
     int selected = 0;
@@ -569,7 +627,10 @@ void showMainMenu() {
             case 3: createISO(); break;
             case 4: runCommand("df -h"); pressAnyKey(); break;
             case 5: installISOToUSB(); break;
-            case 6: runCommand("calamares"); pressAnyKey(); break;
+            case 6:
+                if (alpine) installClonedSystem();
+                else { runCommand("calamares"); pressAnyKey(); }
+                break;
             case 7: return;
         }
     }

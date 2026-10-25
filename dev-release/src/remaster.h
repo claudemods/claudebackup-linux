@@ -65,11 +65,10 @@ inline Context makeContext(const RemasterOptions& o) {
 }
 
 // Host tools the pipeline shells out to (Arch unzips its embedded boot files instead of
-// downloading bootloaders with curl). Build steps run as bash scripts, which a minimal
-// Alpine does not have.
+// downloading bootloaders with curl)
 inline std::vector<std::string> missingTools(const Distro& d) {
     std::vector<std::string> missing;
-    for (const char* t : {"bash", "mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "tar"})
+    for (const char* t : {"mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "tar"})
         if (!commandExists(t)) missing.push_back(t);
     const char* extra = d.family == "archlinux" ? "unzip" : "curl";
     if (!commandExists(extra)) missing.push_back(extra);
@@ -81,7 +80,7 @@ inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools erofs-utils libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
-    if (d.family == "alpine")   return "apk add bash squashfs-tools xorriso mtools dosfstools curl";
+    if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
     if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut";
     return "";
 }
@@ -96,22 +95,55 @@ inline bool prepareBootFiles(const Distro& d) {
     return native::ensureBootloaders();
 }
 
+// Calamares does not run on Alpine, so it is never offered or installed there
+inline bool calamaresAvailable(const Distro& d) { return d.supported() && d.family != "alpine"; }
+
+// Alpine instead gets our own installer that puts the cloned system back on a disk. These are
+// the tools it needs inside the clone, so they are installed on the host before building.
+inline std::string alpineInstallerToolsCommand(const Distro& d) {
+    std::string pkgs = "sfdisk e2fsprogs btrfs-progs dosfstools squashfs-tools grub efibootmgr";
+    if (d.arch == "x86_64") pkgs += " grub-bios grub-efi";
+    return "apk add " + pkgs;
+}
+
+inline bool alpineInstallerReady() {
+    for (const char* t : {"sfdisk", "mkfs.vfat", "grub-install", "grub-mkconfig", "mkinitfs"})
+        if (!commandExists(t)) return false;
+    return true;
+}
+
+// Run from the live ISO: installs the cloned system onto disk (fs = ext4 | btrfs)
+inline bool installClonedSystemAlpine(const std::string& disk, const std::string& fs, bool compress) {
+    if (geteuid() != 0) { logError("Installing needs root."); return false; }
+    return native::runShell(scripts::ALPINE_INSTALLER, "", {disk, fs, compress ? "1" : "0"}) == 0;
+}
+
 // Where each family's live initramfs leaves the squashfs during the live session (Calamares unpackfs)
 inline std::string calamaresUnpackSource(const Distro& d) {
     if (d.family == "debian") return "/run/live/medium/live/filesystem.squashfs";                // live-boot
     if (d.family == "fedora" || d.family == "opensuse" || d.family == "gentoo")
         return "/run/initramfs/live/LiveOS/squashfs.img";                                       // dracut dmsquash-live
-    if (d.family == "alpine") return "/lib/live/mount/medium/live/filesystem.squashfs";         // CDB-SIDECAR
     return "";
 }
 
-inline std::string unzipInstallCommand(const Distro& d) {
-    if (d.family == "debian")   return "apt-get install -y unzip";
-    if (d.family == "fedora")   return "dnf install -y unzip";
-    if (d.family == "opensuse") return "zypper --non-interactive install unzip";
-    if (d.family == "alpine")   return "apk add unzip";
-    if (d.family == "gentoo")   return "emerge --noreplace --ask=n app-arch/unzip";
-    return "pacman -S --needed --noconfirm unzip";
+// Installs one package with the family's package manager
+inline std::string packageInstallCommand(const Distro& d, const std::string& pkg) {
+    if (d.family == "debian")   return "apt-get install -y " + pkg;
+    if (d.family == "fedora")   return "dnf install -y " + pkg;
+    if (d.family == "opensuse") return "zypper --non-interactive install " + pkg;
+    if (d.family == "alpine")   return "apk add " + pkg;
+    if (d.family == "gentoo")   return "emerge --noreplace --ask=n " + pkg;
+    return "pacman -S --needed --noconfirm " + pkg;
+}
+
+// Makes sure a command exists, installing its package if it does not
+inline bool ensureCommand(const Distro& d, const std::string& cmd, const std::string& pkg) {
+    if (commandExists(cmd)) return true;
+    logNormal("Installing " + pkg + "...");
+    runCommand(packageInstallCommand(d, pkg));
+    if (commandExists(cmd)) return true;
+    logError(cmd + " is not installed and '" + packageInstallCommand(d, pkg) + "' did not install it.");
+    return false;
 }
 
 // Installs Calamares on the host so the next ISO contains it.
@@ -119,12 +151,9 @@ inline std::string unzipInstallCommand(const Distro& d) {
 //   others: the distro's calamares package + claudemods branding and a full-clone config
 inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
     if (!d.supported()) { logError("Calamares setup needs a supported distro."); return false; }
-    if (!commandExists("unzip")) {
-        logNormal("Installing unzip...");
-        runCommand(unzipInstallCommand(d));
-        if (!commandExists("unzip")) { logError("unzip is not installed."); return false; }
-    }
-    if (!commandExists("bash")) { logError("bash is not installed (use Setup > Install Needed Tools)"); return false; }
+    if (!calamaresAvailable(d)) { logError("Calamares does not run on Alpine."); return false; }
+    // The embedded zips need unzip
+    if (!ensureCommand(d, "unzip", d.family == "gentoo" ? "app-arch/unzip" : "unzip")) return false;
 
     const std::string dir = STAGING_DIR + "/calamares";
     runCommand("rm -rf " + shq(dir));

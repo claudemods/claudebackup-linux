@@ -18,6 +18,9 @@ namespace native {
 // ---------------------------------------------------------------------------
 // Shell step runner (worker/shell.go): script file + optional chroot
 // ---------------------------------------------------------------------------
+// bash where the distro has it, otherwise the system /bin/sh (BusyBox ash on Alpine)
+inline std::string hostShell() { return commandExists("bash") ? "bash" : "/bin/sh"; }
+
 inline int runShell(const std::string& script, const std::string& chrootPath, const std::vector<std::string>& args = {}) {
     std::string header = "set -e\nexport PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH\"\n\n";
     std::string content = header + script;
@@ -44,7 +47,7 @@ inline int runShell(const std::string& script, const std::string& chrootPath, co
         std::string sh = pathExists(chrootPath + "/bin/bash") ? "/bin/bash" : "/bin/sh";
         cmd = "chroot " + shq(chrootPath) + " " + sh + " /tmp/" + baseName(path) + argStr;
     } else {
-        cmd = "bash " + shq(path) + argStr;
+        cmd = hostShell() + " " + shq(path) + argStr;
     }
     int rc = runCommand(cmd);
     unlink(path.c_str());
@@ -492,7 +495,7 @@ inline bool ensureBootloaders() {
     runCommand("rm -rf " + shq(dir));
     mkdirP(dir);
     std::string cmd = "curl -fsSL " + shq(BOOTLOADER_URL) + " | tar -xz --strip-components=1 -C " + shq(dir);
-    if (runCommand("bash -c " + shq("set -o pipefail; " + cmd)) != 0) {
+    if (runCommand(hostShell() + " -c " + shq("set -o pipefail; " + cmd)) != 0) {
         runCommand("rm -rf " + shq(dir));
         return false;
     }
