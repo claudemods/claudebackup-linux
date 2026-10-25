@@ -82,7 +82,7 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 - [ ] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [ ] installation support
 - [ ] Fedora 🔵 — [x] boots from tests — [ ] installation support
 - [ ] openSUSE 🟢 — [ ] boots from tests — [ ] installation support
-- [ ] Alpine 🏔️ — [ ] boots from tests — [ ] installation support
+- [x] Alpine 🏔️ — [x] boots from tests — [x] installation support
 - [ ] Gentoo 🟣 — [ ] boots from tests — [ ] installation support
 
 ## Stage 3 🎨
