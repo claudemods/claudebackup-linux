@@ -78,7 +78,7 @@ gather knowledge and make a new project called claudebackup-linux from existing 
 
 stage 2
 
-fully support Arch, Debian, Ubuntu, Fedora, openSUSE and Alpine systems
+fully support Arch, Debian, Ubuntu, Fedora, openSUSE and Alpine and Gentoo systems
 
 stage 3 
 
