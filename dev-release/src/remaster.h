@@ -81,7 +81,7 @@ inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
     if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
-    if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut";
+    if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut sys-fs/lvm2";
     return "";
 }
 
@@ -115,7 +115,7 @@ inline bool alpineInstallerReady() {
 // Run from the live ISO: installs the cloned system onto disk (fs = ext4 | btrfs)
 inline bool installClonedSystemAlpine(const std::string& disk, const std::string& fs, bool compress) {
     if (geteuid() != 0) { logError("Installing needs root."); return false; }
-    return native::runShell(scripts::ALPINE_INSTALLER, "", {disk, fs, compress ? "1" : "0"}) == 0;
+    return native::runShell(scripts::render(scripts::ALPINE_INSTALLER), "", {disk, fs, compress ? "1" : "0"}) == 0;
 }
 
 // Where each family's live initramfs leaves the squashfs during the live session (Calamares unpackfs)

@@ -329,7 +329,16 @@ case "$FAMILY" in
         pkg_install zypper --non-interactive install $PKGS
         GRUB=grub2; INITRAMFS=dracut ;;
     gentoo)
-        pkg_install emerge --noreplace --ask=n app-admin/calamares net-misc/rsync sys-boot/grub sys-boot/efibootmgr sys-fs/dosfstools
+        # app-admin/calamares is in ::gentoo but can be keyworded testing-only (~arch); accept it
+        # for this one package if the plain emerge is refused. It builds Qt 6 / KF 6: be patient.
+        PKGS="app-admin/calamares net-misc/rsync sys-boot/grub sys-boot/efibootmgr sys-fs/dosfstools"
+        if ! emerge --noreplace --ask=n $PKGS; then
+            KW="~$(portageq envvar ARCH 2>/dev/null || echo amd64)"
+            echo "-> Accepting $KW for app-admin/calamares and retrying..."
+            mkdir -p /etc/portage/package.accept_keywords
+            echo "app-admin/calamares $KW" > /etc/portage/package.accept_keywords/claudebackup-calamares
+            pkg_install emerge --noreplace --ask=n --autounmask=y --autounmask-continue=y $PKGS
+        fi
         GRUB=grub; INITRAMFS=dracut ;;
     *)
         echo "[FATAL ERROR] no Calamares setup for family '$FAMILY'."
@@ -347,7 +356,7 @@ if [ -d "$CFG" ] && [ ! -d "$CFG.orig" ]; then
     mv "$CFG" "$CFG.orig"
 fi
 rm -rf "$CFG"
-mkdir -p "$MOD"
+mkdir -p "$MOD" "$CFG/scripts"
 
 echo "-> Copying claudemods branding..."
 mkdir -p /usr/share/calamares/branding
@@ -361,10 +370,14 @@ SYSTEMD=0
 # Plain sh word list (runs under /bin/sh when bash is not installed)
 EXEC="partition mount unpackfs"
 [ "$SYSTEMD" = 1 ] && EXEC="$EXEC machineid"
-EXEC="$EXEC fstab locale keyboard localecfg $INITRAMFS grubcfg bootloader umount"
+EXEC="$EXEC fstab locale keyboard localecfg shellprocess@cdbkernel $INITRAMFS grubcfg bootloader umount"
 {
     echo "---"
     echo "modules-search: [ local ]"
+    echo "instances:"
+    echo "- id: cdbkernel"
+    echo "  module: shellprocess"
+    echo "  config: shellprocess_cdbkernel.conf"
     echo "sequence:"
     echo "- show:"
     for m in welcome locale keyboard partition summary; do echo "  - $m"; done
@@ -459,6 +472,44 @@ dbus: true
 dbus-symlink: true
 EOF
 
+# The squashfs is a bind of "/", so a separate /boot partition (common on Gentoo and Fedora) is
+# empty in the clone: give the installed system a kernel before the initramfs step. Runs on the
+# live system (dontChroot) and finds Calamares' target root itself.
+cat > "$CFG/scripts/cdb-kernel.sh" << 'EOF'
+#!/bin/sh
+R="${1:-}"
+[ -n "$R" ] || R=$(awk '$2 ~ /^\/tmp\/calamares-root-[^\/]*$/ {print $2}' /proc/mounts | head -n 1)
+[ -d "$R" ] || { echo "cdb-kernel: target root not found"; exit 1; }
+KV=$(uname -r)
+if ls "$R"/boot/vmlinuz-* "$R"/boot/kernel-* >/dev/null 2>&1; then
+    exit 0
+fi
+mkdir -p "$R/boot"
+for k in "$R/usr/lib/modules/$KV/vmlinuz" "$R/lib/modules/$KV/vmlinuz" \
+         /run/live/medium/live/vmlinuz /run/initramfs/live/live/vmlinuz; do
+    if [ -f "$k" ]; then
+        cp "$k" "$R/boot/vmlinuz-$KV"
+        echo "cdb-kernel: /boot was empty, installed $k as /boot/vmlinuz-$KV"
+        break
+    fi
+done
+[ -f "$R/boot/vmlinuz-$KV" ] || { echo "cdb-kernel: no kernel found for $KV"; exit 1; }
+# Fedora's GRUB boots BLS entries: create the entry for the copied kernel
+if [ "@FAMILY@" = fedora ] && [ -x "$R/usr/bin/kernel-install" ]; then
+    chroot "$R" kernel-install add "$KV" "/boot/vmlinuz-$KV" || true
+fi
+exit 0
+EOF
+sed -i "s/@FAMILY@/$FAMILY/" "$CFG/scripts/cdb-kernel.sh"
+chmod 755 "$CFG/scripts/cdb-kernel.sh"
+cat > "$MOD/shellprocess_cdbkernel.conf" << EOF
+---
+dontChroot: true
+timeout: 600
+script:
+    - "/etc/calamares/scripts/cdb-kernel.sh"
+EOF
+
 REBOOT="reboot"
 [ "$SYSTEMD" = 1 ] && REBOOT="systemctl -i reboot"
 cat > "$MOD/finished.conf" << EOF
@@ -502,10 +553,18 @@ LIVE_SQ=/lib/live/mount/medium/live/filesystem.squashfs
 fail() { echo "[FATAL ERROR] $*"; exit 1; }
 
 [ -b "$DISK" ] || fail "$DISK is not a disk."
-if [ ! -d "$LIVE_ROOT/etc" ] && [ ! -f "$LIVE_SQ" ]; then
-    fail "the cloned system was not found - run this from the claudebackup live ISO."
-fi
 MEDIUM=$(awk '$2=="/lib/live/mount/medium"{print $1}' /proc/mounts | head -n 1)
+OWN_MEDIUM=""
+if [ ! -d "$LIVE_ROOT/etc" ] && [ ! -f "$LIVE_SQ" ]; then
+    # The live boot did not leave its mounts where expected: find the ISO by its label
+    MEDIUM=$(findfs "LABEL=@@LIVE_LABEL@@" 2>/dev/null || blkid -L "@@LIVE_LABEL@@" 2>/dev/null || true)
+    [ -n "$MEDIUM" ] || fail "the cloned system was not found - run this from the claudebackup live ISO."
+    OWN_MEDIUM=/mnt/cdb-medium
+    mkdir -p "$OWN_MEDIUM"
+    mount -o ro "$MEDIUM" "$OWN_MEDIUM" || fail "cannot mount the live medium $MEDIUM."
+    LIVE_SQ="$OWN_MEDIUM/live/filesystem.squashfs"
+    [ -f "$LIVE_SQ" ] || fail "$LIVE_SQ not found on $MEDIUM."
+fi
 case "$MEDIUM" in "$DISK"*) fail "$DISK holds the live ISO you booted from." ;; esac
 for tool in sfdisk mkfs.vfat grub-install grub-mkconfig mkinitfs; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is missing - run Setup > Alpine Installer Tools before building the ISO."
@@ -522,6 +581,7 @@ cleanup() {
     for m in sys/firmware/efi/efivars dev proc sys boot/efi ""; do
         mountpoint -q "$T/$m" 2>/dev/null && umount "$T/$m" 2>/dev/null
     done
+    [ -n "$OWN_MEDIUM" ] && umount "$OWN_MEDIUM" 2>/dev/null
     sync
 }
 trap cleanup EXIT
@@ -563,7 +623,7 @@ FLAVOR=$(uname -r | awk -F- '{print $NF}')
 if ! ls "$T"/boot/vmlinuz-* >/dev/null 2>&1; then
     echo "-> No kernel in the clone's /boot, copying the live kernel..."
     mkdir -p "$T/boot"
-    cp /lib/live/mount/medium/live/vmlinuz "$T/boot/vmlinuz-$FLAVOR"
+    cp "$(dirname "$LIVE_SQ")/vmlinuz" "$T/boot/vmlinuz-$FLAVOR"
 fi
 
 echo "-> Writing /etc/fstab..."
@@ -596,7 +656,9 @@ else
 fi
 grep -q '^GRUB_TIMEOUT=' /etc/default/grub || echo "GRUB_TIMEOUT=5" >> /etc/default/grub
 if [ "$UEFI" = 1 ]; then
-    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine
+    # The NVRAM boot entry can fail (VMs, locked firmware); the removable path below boots anyway
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine ||
+        echo "[WARNING] could not add a UEFI boot entry, relying on the removable EFI/BOOT path"
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable
 else
     grub-install --target=i386-pc "$DISK"

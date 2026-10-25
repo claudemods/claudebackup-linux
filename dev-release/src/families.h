@@ -254,6 +254,11 @@ if [ ! -d /usr/lib/dracut/modules.d/90dmsquash-live ]; then
     echo "[FATAL ERROR] the dracut dmsquash-live module is missing (re-emerge sys-kernel/dracut)."
     exit 1
 fi
+# dmsquash-live pulls in dracut's dm module, which needs dmsetup
+if ! command -v dmsetup >/dev/null 2>&1; then
+    echo "[FATAL ERROR] dmsetup is not installed (emerge sys-fs/lvm2 - Setup > Install Needed Tools does this)."
+    exit 1
+fi
 
 has_mod() {
     modinfo -k "$KERNEL_VERSION" "$1" >/dev/null 2>&1 ||
