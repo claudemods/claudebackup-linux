@@ -219,6 +219,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
 
     menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + "\n";
     menuBuffer += COLOR_RED + "Back up your running system as a bootable live ISO - Debian, Arch, Fedora, openSUSE, Alpine, Gentoo" + COLOR_RESET + "\n";
+    menuBuffer += COLOR_RED + "Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix!" + COLOR_RESET + "\n";
     {
         std::lock_guard<std::mutex> lock(time_mutex);
         menuBuffer += COLOR_GREEN + "Current Time: " + current_time_str + COLOR_RESET + "\n";
