@@ -77,13 +77,13 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 
 ## Stage 2 🐧CURRENTLY HERE 📍
 Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
-- [x] Arch 🟦 — [x] installation support — [x] boots from tests ✅
-- [ ] Debian 🔴 — [ ] installation support — [x] boots from tests 
-- [ ] Ubuntu/KDE Neon 🟠 — [ ] installation support — [x] boots from tests 
-- [ ] Fedora 🔵 — [ ] installation support — [x] boots from tests
-- [ ] openSUSE 🟢 — [ ] installation support — [ ] boots from tests
-- [ ] Alpine 🏔️ — [ ] installation support — [ ] boots from tests
-- [ ] Gentoo 🟣 — [ ] installation support — [ ] boots from tests
+- [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
+- [ ] Debian 🔴 — [x] boots from tests — [ ] installation support
+- [ ] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [ ] installation support
+- [ ] Fedora 🔵 — [x] boots from tests — [ ] installation support
+- [ ] openSUSE 🟢 — [ ] boots from tests — [ ] installation support
+- [ ] Alpine 🏔️ — [ ] boots from tests — [ ] installation support
+- [ ] Gentoo 🟣 — [ ] boots from tests — [ ] installation support
 
 ## Stage 3 🎨
 - [ ] Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
