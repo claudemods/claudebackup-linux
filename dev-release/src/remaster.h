@@ -65,10 +65,11 @@ inline Context makeContext(const RemasterOptions& o) {
 }
 
 // Host tools the pipeline shells out to (Arch unzips its embedded boot files instead of
-// downloading bootloaders with curl)
+// downloading bootloaders with curl). Build steps run as bash scripts, which a minimal
+// Alpine does not have.
 inline std::vector<std::string> missingTools(const Distro& d) {
     std::vector<std::string> missing;
-    for (const char* t : {"mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "tar"})
+    for (const char* t : {"bash", "mksquashfs", "xorriso", "mcopy", "mkfs.vfat", "tar"})
         if (!commandExists(t)) missing.push_back(t);
     const char* extra = d.family == "archlinux" ? "unzip" : "curl";
     if (!commandExists(extra)) missing.push_back(extra);
@@ -80,7 +81,7 @@ inline std::string installToolsCommand(const Distro& d) {
     if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools erofs-utils libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
     if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
     if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
-    if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
+    if (d.family == "alpine")   return "apk add bash squashfs-tools xorriso mtools dosfstools curl";
     if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut";
     return "";
 }
@@ -123,6 +124,7 @@ inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
         runCommand(unzipInstallCommand(d));
         if (!commandExists("unzip")) { logError("unzip is not installed."); return false; }
     }
+    if (!commandExists("bash")) { logError("bash is not installed (use Setup > Install Needed Tools)"); return false; }
 
     const std::string dir = STAGING_DIR + "/calamares";
     runCommand("rm -rf " + shq(dir));

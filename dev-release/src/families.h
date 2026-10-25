@@ -121,7 +121,7 @@ if [ ! -f "$HOOKS_DIR/mkinitcpio.conf" ]; then
     exit 1
 fi
 if ! command -v mkinitcpio > /dev/null 2>&1; then
-    echo "[FATAL ERROR] mkinitcpio is not installed (sudo pacman -S mkinitcpio)."
+    echo "[FATAL ERROR] mkinitcpio is not installed (pacman -S mkinitcpio)."
     exit 1
 fi
 

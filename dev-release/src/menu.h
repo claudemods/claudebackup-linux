@@ -7,6 +7,7 @@
 #include <chrono>
 #include <termios.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include "remaster.h"
 
 // Interactive menu, same look and feel as the claudemods multi iso creator:
@@ -36,15 +37,24 @@ struct MenuConfig {
 };
 MenuConfig mcfg;
 
-std::string defaultCloneDir() { return "/home/" + USERNAME + "/clone_system_temp"; }
+// The user's real home from the password database (root is /root, and homes are not always /home/<user>)
+std::string userHome() {
+    struct passwd* pw = getpwnam(USERNAME.c_str());
+    if (pw && pw->pw_dir && *pw->pw_dir) return pw->pw_dir;
+    return USERNAME == "root" ? "/root" : "/home/" + USERNAME;
+}
 
-std::string configDirPath() { return "/home/" + USERNAME + "/.config/" + APP_BIN; }
+std::string defaultCloneDir() { return userHome() + "/clone_system_temp"; }
+
+std::string configDirPath() { return userHome() + "/.config/" + APP_BIN; }
 std::string configFilePath() { return configDirPath() + "/configuration.txt"; }
 
 void saveConfig() {
     mkdirP(configDirPath());
     std::ofstream f(configFilePath());
     if (!f.is_open()) { std::cerr << COLOR_RED << "Failed to save configuration to " << configFilePath() << COLOR_RESET << std::endl; return; }
+    // We run as root: keep the user's own config folder owned by the user
+    runCommand("chown -R " + shq(USERNAME) + " " + shq(configDirPath()) + " 2>/dev/null");
     f << "isoName=" << mcfg.isoName << "\n";
     f << "workDir=" << mcfg.workDir << "\n";
     f << "outputDir=" << mcfg.outputDir << "\n";
@@ -327,7 +337,7 @@ void showGuide() {
         "Gentoo: dracut dmsquash-live; your kernel needs CONFIG_SQUASHFS, CONFIG_OVERLAY_FS,\n"
         "CONFIG_ISO9660_FS and CONFIG_BLK_DEV_LOOP (=m or =y) - the build tells you if one is off.\n\n"
         "Free space needed is roughly twice the size of the finished ISO.\n"
-        "Fedora: run 'sudo setenforce 0' before building.\n"
+        "Fedora: run 'setenforce 0' as root before building.\n"
         "Log: " << LOG_FILE << COLOR_RESET << "\n";
     pressAnyKey();
 }
@@ -341,9 +351,11 @@ void showSystemInfo() {
               << "Support: " << (c.distro.supported() ? "yes" : "NO (unmapped distro)") << "\n"
               << "Boot:    " << families::bootParams(c) << "\n"
               << "ISO:     " << c.isoPath << "\n\nBuild steps:\n";
-    int i = 1;
-    for (const auto& s : plan::build(c))
-        std::cout << "  " << (i < 10 ? " " : "") << i++ << ". " << s.name << " - " << s.description << "\n";
+    int i = 0;
+    for (const auto& s : plan::build(c)) {
+        i++;
+        std::cout << "  " << (i < 10 ? " " : "") << i << ". " << s.name << " - " << s.description << "\n";
+    }
     std::cout << COLOR_RESET;
     pressAnyKey();
 }
@@ -385,7 +397,9 @@ void installISOToUSB() {
     std::string iso = dir + "/" + isoFiles[choice - 1];
 
     std::cout << COLOR_CYAN << "\nAvailable drives:" << COLOR_RESET << std::endl;
-    runCommand("lsblk -d -o NAME,SIZE,MODEL | grep -v loop");
+    // lsblk is util-linux; plain BusyBox systems (Alpine) only have /proc/partitions
+    if (commandExists("lsblk")) runCommand("lsblk -d -o NAME,SIZE,MODEL | grep -v loop");
+    else runCommand("grep -vE ' (loop|ram)[0-9]' /proc/partitions");
     std::string target = getUserInput("Enter target drive (e.g., /dev/sda): ");
     if (!startsWith(target, "/dev/")) {
         std::cerr << COLOR_RED << "Invalid drive!" << COLOR_RESET << std::endl;
@@ -396,7 +410,14 @@ void installISOToUSB() {
     std::string confirm = getUserInput("Are you sure you want to continue? (y/N): ");
     if (confirm != "y" && confirm != "Y") { std::cout << COLOR_CYAN << "Operation cancelled." << COLOR_RESET << std::endl; pressAnyKey(); return; }
 
-    runCommand("dd if=" + shq(iso) + " of=" + shq(target) + " bs=4M status=progress oflag=sync");
+    // GNU dd shows progress; BusyBox dd (Alpine) has no status=progress / oflag=sync
+    bool gnuDd = runCommand("dd --version >/dev/null 2>&1") == 0;
+    std::string dd = "dd if=" + shq(iso) + " of=" + shq(target) + " bs=4M" + (gnuDd ? " status=progress oflag=sync" : "");
+    if (runCommand(dd) != 0 || runCommand("sync") != 0) {
+        std::cerr << COLOR_RED << "\nWriting to " << target << " failed." << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
     std::cout << COLOR_GREEN << "\nISO written to " << target << COLOR_RESET << std::endl;
     pressAnyKey();
 }
@@ -442,7 +463,7 @@ void showSetupMenu() {
             case 4: mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); break;
             case 5: {
                 // cmiadvanced setCloneDir: parent folder + /clone_system_temp
-                std::string def = "/home/" + USERNAME;
+                std::string def = userHome();
                 std::cout << COLOR_GREEN << "Current clone directory: " << (mcfg.cloneDir.empty() ? "Not set" : mcfg.cloneDir) << "\n"
                           << "Default directory: " << def << COLOR_RESET << std::endl;
                 std::string parent = getUserInput("Enter parent directory for clone_system_temp folder (e.g., " + def + " or $USER): ");
