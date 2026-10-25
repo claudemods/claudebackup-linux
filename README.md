@@ -84,7 +84,7 @@ stage 3
 
 test them all
 
-currently arch and debian boots from tests
+currently arch, debian, ubuntu/kde neon and fedora boots from tests
 
 stage 4 
 
