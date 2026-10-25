@@ -71,25 +71,19 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 
 # 🚀 Claudebackup-Linux Project Roadmap 🚀
 
-## Stage 1 📚
-Gather knowledge 📖 make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
+## Stage 1 📚 ✅
+- [x] Gather knowledge 📖
+- [x] Make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
 
-## Stage 2 🐧
-Fully support:
-- Arch 🟦
-- Debian 🔴
-- Ubuntu 🟠
-- Fedora 🔵
-- openSUSE 🟢
-- Alpine 🏔️
-- Gentoo 🟣
+## Stage 2 🐧CURRENTLY HERE 📍
+Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
+- [x] Arch 🟦 — [x] installation support — [x] boots from tests ✅
+- [ ] Debian 🔴 — [ ] installation support — [x] boots from tests 
+- [ ] Ubuntu/KDE Neon 🟠 — [ ] installation support — [x] boots from tests 
+- [ ] Fedora 🔵 — [ ] installation support — [x] boots from tests
+- [ ] openSUSE 🟢 — [ ] installation support — [ ] boots from tests
+- [ ] Alpine 🏔️ — [ ] installation support — [ ] boots from tests
+- [ ] Gentoo 🟣 — [ ] installation support — [ ] boots from tests
 
-## Stage 3 🧪 **← YOU ARE HERE** 📍
-Test them all ✅
-
-**Current status:** Arch 🟦, Debian 🔴, Ubuntu/KDE Neon 🟠 and Fedora 🔵 boot from tests 🎉✅
-
-Still to test: openSUSE 🟢, Alpine 🏔️, Gentoo 🟣 ⏳
-
-## Stage 4 🎨
-Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
+## Stage 3 🎨
+- [ ] Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
