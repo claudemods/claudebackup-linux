@@ -72,7 +72,7 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 # 🚀 Claudebackup-Linux Project Roadmap 🚀
 
 ## Stage 1 📚
-Gather knowledge 📖 and make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
+Gather knowledge 📖 make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
 
 ## Stage 2 🐧
 Fully support:
