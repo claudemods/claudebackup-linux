@@ -250,9 +250,11 @@ if ! command -v dracut >/dev/null 2>&1; then
     echo "[FATAL ERROR] dracut is not installed (emerge sys-kernel/dracut)."
     exit 1
 fi
-if [ ! -d /usr/lib/dracut/modules.d/90dmsquash-live ]; then
-    echo "[FATAL ERROR] the dracut dmsquash-live module is missing (re-emerge sys-kernel/dracut)."
-    exit 1
+# The module folder's number/location differs between dracut and dracut-ng: match by name
+DMSQ=$(ls -d /usr/lib/dracut/modules.d/*dmsquash-live /usr/lib64/dracut/modules.d/*dmsquash-live 2>/dev/null | head -n 1 || true)
+if [ -z "$DMSQ" ]; then
+    echo "[WARNING] dracut's dmsquash-live module was not found in /usr/lib*/dracut/modules.d -"
+    echo "          letting dracut decide (if it fails: emerge --oneshot sys-kernel/dracut)."
 fi
 # dmsquash-live pulls in dracut's dm module, which needs dmsetup
 if ! command -v dmsetup >/dev/null 2>&1; then
@@ -277,7 +279,11 @@ fi
 
 DRIVERS="iso9660 squashfs loop overlay"
 has_mod sr_mod && DRIVERS="sr_mod $DRIVERS"
-dracut -f --no-hostonly --add "dmsquash-live" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img
+if ! dracut -f --no-hostonly --add "dmsquash-live" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img; then
+    echo "[FATAL ERROR] dracut could not build the live initramfs - see its messages above."
+    echo "              Check: ls /usr/lib/dracut/modules.d | grep squash   (re-emerge sys-kernel/dracut if empty)"
+    exit 1
+fi
 if [ ! -f /boot/cdb-initrd.img ]; then
     echo "[FATAL ERROR] /boot/cdb-initrd.img was not generated!"
     exit 1
