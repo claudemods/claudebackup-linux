@@ -69,24 +69,27 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 
 ---
 
-road map for the road to success
+# 🚀 Claudebackup-Linux Project Roadmap 🚀
 
-stage 1 
+## Stage 1 📚
+Gather knowledge 📖 and make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
 
-gather knowledge and make a new project called claudebackup-linux from existing functions in claudemods-multi-iso-konsole-script 
+## Stage 2 🐧
+Fully support:
+- Arch 🟦
+- Debian 🔴
+- Ubuntu 🟠
+- Fedora 🔵
+- openSUSE 🟢
+- Alpine 🏔️
+- Gentoo 🟣
 
+## Stage 3 🧪 **← YOU ARE HERE** 📍
+Test them all ✅
 
-stage 2
+**Current status:** Arch 🟦, Debian 🔴, Ubuntu/KDE Neon 🟠 and Fedora 🔵 boot from tests 🎉✅
 
-fully support Arch, Debian, Ubuntu, Fedora, openSUSE and Alpine and Gentoo systems
+Still to test: openSUSE 🟢, Alpine 🏔️, Gentoo 🟣 ⏳
 
-stage 3 
-
-test them all
-
-currently arch, debian, ubuntu/kde neon and fedora boots from tests
-
-stage 4 
-
-once script fully works as intended upgrade claudebackup-linux-qt6 the gui version of what will be this finished script 
-
+## Stage 4 🎨
+Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
