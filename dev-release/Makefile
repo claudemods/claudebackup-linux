@@ -5,17 +5,11 @@ LDLIBS   := -pthread
 TARGET := claudebackup-linux
 HDRS   := $(wildcard src/*.h)
 
-# claudemods zips (Arch ISO tree + Calamares) embedded into the binary
-ZIPS   := build-image-arch-img calamares-files claudemods
-RESOBJ := $(patsubst %,build/%.o,$(ZIPS))
+# claudemods zips (Arch ISO tree + Calamares), embedded by src/resources.h with .incbin
+ZIPS   := $(wildcard resources/*.zip)
 
-$(TARGET): src/main.cpp $(HDRS) $(RESOBJ)
-	$(CXX) $(CXXFLAGS) -o $@ src/main.cpp $(RESOBJ) $(LDLIBS)
-
-# Run from resources/ so the symbols are _binary_<name>_zip_start/_end
-build/%.o: resources/%.zip
-	@mkdir -p build
-	cd resources && $(LD) -r -b binary -z noexecstack -o ../$@ $*.zip
+$(TARGET): src/main.cpp $(HDRS) $(ZIPS)
+	$(CXX) $(CXXFLAGS) -o $@ src/main.cpp $(LDLIBS)
 
 install: $(TARGET)
 	install -Dm755 $(TARGET) $(DESTDIR)/usr/bin/$(TARGET)
@@ -24,6 +18,6 @@ install: $(TARGET)
 
 clean:
 	rm -f $(TARGET)
-	rm -rf build
+	rm -rf build   # objects from the old ld -r -b binary build
 
 .PHONY: install clean
