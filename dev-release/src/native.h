@@ -369,10 +369,26 @@ inline bool runMkerofs(const Context& c, const std::string& dest) {
     return ok;
 }
 
+// mksquashfs is sometimes built with only some compressors (Gentoo: gzip unless USE=zstd etc.)
+inline bool squashfsHasCompressor(const std::string& algo) {
+    std::string help = captureCommand("mksquashfs -help 2>&1");
+    if (!contains(help, "ompressors available")) return true;   // no list in this version: don't guess
+    for (const auto& l : splitLines(help)) {
+        std::string t = trim(l);
+        if (t == algo || startsWith(t, algo + " ")) return true;
+    }
+    return false;
+}
+
 inline bool runMksquashfs(const Context& c, const std::string& dest) {
     if (c.distro.family == "archlinux" && c.settings.imageFormat == "erofs") return runMkerofs(c, dest);
 
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
+    if (algo != "gzip" && !squashfsHasCompressor(algo)) {
+        logWarning("This mksquashfs was built without " + algo + " - using gzip instead" +
+                   (c.distro.family == "gentoo" ? " (Setup > Install Needed Tools rebuilds it with zstd/xz)." : "."));
+        algo = "gzip";
+    }
     int lvl = c.settings.compressionLevel > 0 ? c.settings.compressionLevel : 3;
     unsigned procs = std::thread::hardware_concurrency();
     if (procs == 0) procs = 1;

@@ -279,7 +279,8 @@ fi
 
 DRIVERS="iso9660 squashfs loop overlay"
 has_mod sr_mod && DRIVERS="sr_mod $DRIVERS"
-if ! dracut -f --no-hostonly --add "dmsquash-live" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img; then
+# multipath is not needed to boot a live ISO and fails on systems with multipath-tools installed
+if ! dracut -f --no-hostonly --add "dmsquash-live" --omit "multipath" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img; then
     echo "[FATAL ERROR] dracut could not build the live initramfs - see its messages above."
     echo "              Check: ls /usr/lib/dracut/modules.d | grep squash   (re-emerge sys-kernel/dracut if empty)"
     exit 1
