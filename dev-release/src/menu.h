@@ -452,8 +452,11 @@ void showSetupMenu() {
         int pick = pickFromMenu("setup menu:", items, selected);
         switch (pick) {
             case 0: {
-                std::string cmd = remaster::installToolsCommand(detectDistro());
+                Distro d = detectDistro();
+                std::string cmd = remaster::installToolsCommand(d);
                 if (cmd.empty()) std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
+                else if (d.family == "gentoo" && !remaster::prepareGentooPortage())
+                    logError("Portage is not usable yet (see above), so nothing was emerged.");
                 else { std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl; runCommand(cmd); }
                 pressAnyKey();
                 break;

@@ -669,6 +669,46 @@ CHROOT
 echo "-> The cloned system is installed on $DISK. Remove the live medium and reboot."
 )CDB";
 
+// Gentoo: emerge refuses to install anything without the ::gentoo repository and a valid profile.
+// Systems installed from a live ISO often have neither (no repo, make.profile copied as a folder).
+// Fetch the repo only if it is missing, then point make.profile at a real profile.
+inline const char* GENTOO_PORTAGE_PREP = R"CDB(
+REPO=$(portageq get_repo_path / gentoo 2>/dev/null || true)
+[ -n "$REPO" ] || REPO=/var/db/repos/gentoo
+if [ ! -d "$REPO/profiles" ]; then
+    echo "-> No Gentoo repository in $REPO, fetching it (emerge-webrsync)..."
+    mkdir -p "$REPO"
+    emerge-webrsync || emerge --sync
+fi
+[ -d "$REPO/profiles" ] || { echo "[FATAL ERROR] the Gentoo repository could not be fetched into $REPO."; exit 1; }
+
+MP=/etc/portage/make.profile
+if [ ! -L "$MP" ] || [ ! -e "$MP" ]; then
+    # The live ISO's copied profile folder usually names the profile it came from
+    WANT=""
+    if [ -f "$MP/parent" ]; then
+        WANT=$(head -n 1 "$MP/parent" | sed -e 's#^gentoo:##' -e 's#.*/profiles/##')
+    fi
+    if [ -z "$WANT" ] || [ ! -d "$REPO/profiles/$WANT" ]; then
+        ARCH=$(portageq envvar ARCH 2>/dev/null || echo amd64)
+        LIST=$(eselect profile list 2>/dev/null | grep '(stable)' | awk '{print $2}')
+        WANT=""
+        for suffix in /desktop/plasma /desktop ""; do
+            WANT=$(echo "$LIST" | grep -E "^default/linux/$ARCH/[0-9.]+$suffix\$" | sort -V | tail -n 1)
+            [ -n "$WANT" ] && break
+        done
+    fi
+    [ -n "$WANT" ] || { echo "[FATAL ERROR] no Gentoo profile found - pick one with: eselect profile list / set"; exit 1; }
+    if [ -e "$MP" ] || [ -L "$MP" ]; then
+        rm -rf "$MP.livecd-backup"
+        mv "$MP" "$MP.livecd-backup"
+    fi
+    echo "-> Setting the Gentoo profile to $WANT"
+    eselect profile set "$WANT"
+fi
+echo "-> Portage is ready (repository $REPO, profile $(readlink "$MP"))."
+)CDB";
+
 // Applies the build-time constants to an embedded script
 inline std::string render(const char* script) {
     std::string s = script;

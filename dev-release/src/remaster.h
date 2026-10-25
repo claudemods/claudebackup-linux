@@ -85,6 +85,11 @@ inline std::string installToolsCommand(const Distro& d) {
     return "";
 }
 
+// Gentoo: make sure emerge can work (repository present, make.profile a real profile link)
+inline bool prepareGentooPortage() {
+    return native::runShell(scripts::GENTOO_PORTAGE_PREP, "") == 0;
+}
+
 // Boot files for the build: the embedded claudemods zip on Arch, downloaded bootloaders otherwise
 inline bool bootFilesReady(const Distro& d) {
     return d.family == "archlinux" || pathExists(STAGING_DIR + "/bootloaders/.download-complete");
@@ -152,6 +157,7 @@ inline bool ensureCommand(const Distro& d, const std::string& cmd, const std::st
 inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
     if (!d.supported()) { logError("Calamares setup needs a supported distro."); return false; }
     if (!calamaresAvailable(d)) { logError("Calamares does not run on Alpine."); return false; }
+    if (d.family == "gentoo" && !prepareGentooPortage()) { logError("Portage is not usable, cannot emerge Calamares."); return false; }
     // The embedded zips need unzip
     if (!ensureCommand(d, "unzip", d.family == "gentoo" ? "app-arch/unzip" : "unzip")) return false;
 
