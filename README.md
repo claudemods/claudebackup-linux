@@ -78,7 +78,7 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 ## Stage 2 🐧CURRENTLY HERE 📍
 Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
 - [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
-- [x] Debian 🔴 — [x] boots from tests — [ ] installation support
+- [x] Debian 🔴 — [x] boots from tests — [x] installation support ✅
 - [x] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [x] installation support ✅
 - [x] Fedora 🔵 — [x] boots from tests — [x] installation support ✅
 - [x] openSUSE 🟢 — [x] boots from tests — [x] installation support ✅
