@@ -464,11 +464,15 @@ echo "-> Copying Kernel and Initramfs Debian/Ubuntu/Kylin ($KERNEL_VERSION)..."
 
 if [ -f "$LIVEROOT/boot/vmlinuz-$KERNEL_VERSION" ]; then
     KERNEL_SRC="$LIVEROOT/boot/vmlinuz-$KERNEL_VERSION"
+elif [ -f "$LIVEROOT/usr/lib/modules/$KERNEL_VERSION/vmlinuz" ]; then
+    KERNEL_SRC="$LIVEROOT/usr/lib/modules/$KERNEL_VERSION/vmlinuz"
 else
     KERNEL_SRC=$(find "$LIVEROOT/boot" -maxdepth 1 -name "vmlinuz-*" -type f | sort -V | tail -n 1)
 fi
 if [ ! -f "$KERNEL_SRC" ]; then
-    echo "[FATAL ERROR] Kernel not found in $LIVEROOT/boot!"
+    echo "[FATAL ERROR] Kernel not found in $LIVEROOT/boot or /usr/lib/modules!"
+    echo "              Kernel images in /boot: $(ls -1 "$LIVEROOT/boot" 2>/dev/null | tr '\n' ' ')"
+    echo "              If the kernel was updated since the last reboot, reboot into it and build again."
     exit 1
 fi
 
@@ -540,14 +544,31 @@ echo "-> Copy completed."
         s += R"CDB(
 KERNEL_VERSION=$(uname -r)
 echo "-> Copying Kernel ($KERNEL_VERSION)..."
-KERNEL_SRC="$LIVEROOT/boot/vmlinuz-$KERNEL_VERSION"
 INITRD_SRC="$LIVEROOT/boot/cdb-initrd.img"
 DEST_DIR="$ISODIR/live"
 
-if [ ! -f "$KERNEL_SRC" ]; then
-    echo "[FATAL ERROR] Cannot find kernel in $KERNEL_SRC!"
+# The kernel image of the version the initramfs was built for (its modules). It is not always
+# /boot/vmlinuz-<version>: newer openSUSE / Fedora keep it in /usr/lib/modules/<version>/vmlinuz
+# or in a boot-loader-spec folder (/boot/<machine-id>/<version>/linux).
+KERNEL_SRC=""
+for k in "$LIVEROOT/boot/vmlinuz-$KERNEL_VERSION" \
+         "$LIVEROOT/usr/lib/modules/$KERNEL_VERSION/vmlinuz" \
+         "$LIVEROOT/lib/modules/$KERNEL_VERSION/vmlinuz"; do
+    if [ -f "$k" ]; then KERNEL_SRC="$k"; break; fi
+done
+if [ -z "$KERNEL_SRC" ]; then
+    KERNEL_SRC=$(find "$LIVEROOT/boot" -maxdepth 4 -type f \( -path "*/$KERNEL_VERSION/linux" -o -path "*/$KERNEL_VERSION/linux-*" \) 2>/dev/null | head -n 1)
+fi
+
+if [ -z "$KERNEL_SRC" ] || [ ! -f "$KERNEL_SRC" ]; then
+    echo "[FATAL ERROR] Cannot find the kernel image for $KERNEL_VERSION in $LIVEROOT/boot or /usr/lib/modules!"
+    echo "              Kernel images in /boot:"
+    ls -1 "$LIVEROOT/boot" 2>/dev/null | head -n 20
+    echo "              Installed module sets: $(ls -1 "$LIVEROOT/lib/modules" 2>/dev/null | tr '\n' ' ')"
+    echo "              If the kernel was updated since the last reboot, reboot into it and build again."
     exit 1
 fi
+echo "-> Kernel image: $KERNEL_SRC"
 if [ ! -f "$INITRD_SRC" ]; then
     echo "[FATAL ERROR] Cannot find initrd in $INITRD_SRC! dracut did not generate it."
     exit 1
@@ -562,6 +583,16 @@ echo "-> Copy completed."
     } else if (f == "alpine") {
         s += R"CDB(
 FLAVOR="$(uname -r | awk -F- '{print $NF}')"
+if [ ! -f "$LIVEROOT/boot/vmlinuz-$FLAVOR" ]; then
+    echo "[FATAL ERROR] Cannot find the kernel image $LIVEROOT/boot/vmlinuz-$FLAVOR!"
+    echo "              Kernel images in /boot: $(ls -1 "$LIVEROOT/boot" 2>/dev/null | tr '\n' ' ')"
+    echo "              If the kernel was updated since the last reboot, reboot into it and build again."
+    exit 1
+fi
+if [ ! -f "$LIVEROOT/boot/initramfs-cdb" ]; then
+    echo "[FATAL ERROR] initramfs-cdb was not generated in $LIVEROOT/boot!"
+    exit 1
+fi
 mkdir -p "$ISODIR/live"
 cp "$LIVEROOT/boot/vmlinuz-$FLAVOR" "$ISODIR/live/vmlinuz"
 cp "$LIVEROOT/boot/initramfs-cdb" "$ISODIR/live/initrd.img"
