@@ -80,7 +80,7 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 - [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
 - [x] Debian 🔴 — [x] boots from tests — [ ] installation support
 - [x] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [x] installation support ✅
-- [x] Fedora 🔵 — [x] boots from tests — [ ] installation support
+- [x] Fedora 🔵 — [x] boots from tests — [x] installation support ✅
 - [x] openSUSE 🟢 — [x] boots from tests — [x] installation support ✅
 - [x] Alpine 🏔️ — [x] boots from tests — [x] installation support ✅
 - [x] Gentoo 🟣 — [x] boots from tests — [x] installation support ✅
