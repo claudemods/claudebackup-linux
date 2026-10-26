@@ -18,9 +18,9 @@ TARGET="claudebackup-linux"
 
 # Messages and the output of the commands after them are green (like the app); "==>" stays red,
 # errors are red. say() leaves the terminal green, so the commands' output that follows is green too.
-say() { printf '\033[1;31m==>\033[0;32m %s\n' "$*"; }
+say() { printf '\033[1;31m==>\033[0;92m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-printf '\033[32m'
+printf '\033[92m'
 
 # Single-quote one argument for a shell command line (for su -c)
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -139,6 +139,26 @@ install_erofs_utils() {
         alpine)   apk add erofs-utils ;;
         gentoo)   emerge --noreplace --ask=n sys-fs/erofs-utils ;;
     esac || say "erofs-utils is not available here - only the squashfs image format will work"
+}
+
+# BIOS/UEFI boot files the live ISO is made from (Arch uses the app's embedded claudemods zip
+# instead). Kept in a persistent folder; the app only reads it (BOOTLOADER_DIR in src/common.h).
+BOOTLOADER_URL="https://github.com/pieroproietti/penguins-bootloaders/releases/download/v26.1.16/bootloaders.tar.gz"
+BOOTLOADER_DIR="/usr/local/share/claudebackup-linux/bootloaders"
+install_bootloaders() {
+    [ "$FAMILY" = arch ] && return 0
+    [ -f "$BOOTLOADER_DIR/.download-complete" ] && return 0
+    say "Downloading the bootloaders (BIOS/UEFI boot files for the live ISO)"
+    rm -rf "$BOOTLOADER_DIR"
+    mkdir -p "$BOOTLOADER_DIR"
+    if curl -fsSL "$BOOTLOADER_URL" -o "$BOOTLOADER_DIR.tar.gz" &&
+       tar -xzf "$BOOTLOADER_DIR.tar.gz" --strip-components=1 -C "$BOOTLOADER_DIR"; then
+        echo ok > "$BOOTLOADER_DIR/.download-complete"
+        rm -f "$BOOTLOADER_DIR.tar.gz"
+    else
+        rm -rf "$BOOTLOADER_DIR" "$BOOTLOADER_DIR.tar.gz"
+        die "the bootloaders could not be downloaded from $BOOTLOADER_URL"
+    fi
 }
 
 # Alpine: the tools the live ISO's "Install Cloned System To Disk" needs (they go into the clone)
@@ -510,6 +530,7 @@ root_phase() {
     [ "$1" = "$FAMILY" ] || die "the distro detected as root differs ($DISTRO_NAME)"
     install_host_tools
     install_erofs_utils
+    install_bootloaders
     if [ "$FAMILY" = alpine ]; then
         if [ "$5" = "1" ]; then install_alpine_installer_tools; fi
     elif [ "$2" = "1" ]; then
@@ -539,7 +560,7 @@ say "Detected $DISTRO_NAME"
 # yes/no question; $2 is the default (y/n); no terminal = the default
 ask() {
     if [ ! -t 0 ]; then [ "$2" = y ]; return; fi
-    printf '\033[1;32m%s\033[0;32m ' "$1"
+    printf '\033[1;92m%s\033[0;92m ' "$1"
     read -r reply
     reply=$(printf '%s' "${reply:-$2}" | tr '[:upper:]' '[:lower:]')
     [ "$reply" = y ] || [ "$reply" = yes ]
@@ -547,7 +568,7 @@ ask() {
 # choice of 1/2; prints 1 or 2 (default 1)
 choose() {
     if [ ! -t 0 ]; then echo 1; return; fi
-    printf '\033[1;32m%s\033[0;32m ' "$1" >&2
+    printf '\033[1;92m%s\033[0;92m ' "$1" >&2
     read -r reply
     [ "$reply" = 2 ] && echo 2 || echo 1
 }
