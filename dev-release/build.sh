@@ -550,6 +550,22 @@ choose() {
 }
 
 CALAMARES=0; BTRFS=0; EROFS=0; ALPINE_TOOLS=0
+
+# One image type for everything: the ISO the app builds (its Setup > Image Format) and Calamares
+IMAGE=squashfs
+echo "System image type for the ISO (the app and Calamares both use it):"
+echo "  1) Squashfs (default)"
+echo "  2) Erofs"
+if [ "$(choose "Enter your choice (1 or 2):")" = 2 ]; then
+    # The live ISO boots this kernel, so it must be able to mount erofs
+    if grep -qw erofs /proc/filesystems 2>/dev/null || modinfo erofs >/dev/null 2>&1; then
+        IMAGE=erofs
+        EROFS=1
+    else
+        say "This kernel has no erofs support (CONFIG_EROFS_FS), so the ISO could not boot an erofs image - using squashfs"
+    fi
+fi
+
 if [ "$FAMILY" = alpine ]; then
     say "Calamares does not run on Alpine; the live ISO has 'Install Cloned System To Disk' instead"
     if ask "Install the Alpine installer tools (sfdisk, mkfs, GRUB) so the ISO can install itself? [Y/n]" y; then
@@ -561,10 +577,6 @@ elif ask "Install Calamares, so the live ISO can install itself to a disk? [Y/n]
     echo "  1) Default configuration (Ext4)"
     echo "  2) Custom configuration with btrfs level 22 compression"
     [ "$(choose "Enter your choice (1 or 2):")" = 2 ] && BTRFS=1
-    echo "Cloned system image type (must match Setup > Image Format in the app):"
-    echo "  1) Squashfs (default)"
-    echo "  2) Erofs"
-    [ "$(choose "Enter your choice (1 or 2):")" = 2 ] && EROFS=1
 fi
 
 # The user whose Desktop gets the shortcut (also when build.sh itself was started through sudo/doas)
@@ -616,8 +628,30 @@ EOF
     say "Added 'Install $DISTRO_NAME' to $DIR"
 }
 
+# The app reads its settings from ~/.config/claudebackup-linux/configuration.txt: start its
+# Image Format on the type chosen here (it can still be changed in the app's Setup)
+save_image_format() {
+    CFGDIR="$DESK_HOME/.config/claudebackup-linux"
+    CFGFILE="$CFGDIR/configuration.txt"
+    mkdir -p "$CFGDIR"
+    if [ -f "$CFGFILE" ] && grep -q '^imageFormat=' "$CFGFILE"; then
+        sed -i "s/^imageFormat=.*/imageFormat=$IMAGE/" "$CFGFILE"
+    else
+        echo "imageFormat=$IMAGE" >> "$CFGFILE"
+    fi
+    if [ -n "$DESK_USER" ]; then chown "$DESK_USER" "$CFGDIR" "$CFGFILE" 2>/dev/null || true; fi
+    say "Image type set to $IMAGE (app: Setup > Image Format)"
+}
+
 say "Installing packages as root"
 as_root sh "$SELF" --root-phase "$FAMILY" "$CALAMARES" "$BTRFS" "$EROFS" "$ALPINE_TOOLS"
+
+# erofs-utils is optional (older releases do not package it): without mkfs.erofs, use squashfs
+if [ "$IMAGE" = erofs ] && ! command -v mkfs.erofs >/dev/null 2>&1; then
+    say "mkfs.erofs is not available on $DISTRO_NAME - using squashfs"
+    IMAGE=squashfs
+fi
+save_image_format
 
 say "Building with make"
 make -C "$SRC_DIR" -j"$(nproc 2>/dev/null || echo 1)"
