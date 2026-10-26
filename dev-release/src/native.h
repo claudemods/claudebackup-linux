@@ -307,6 +307,25 @@ inline std::string generateExcludeList(const Context& c) {
 
     for (const auto& s : swapFilesFromFstab()) ex.push_back(s);
 
+    // A Fedora host started from a Fedora live ISO still has Anaconda's "Install to Hard Drive"
+    // launchers. The clone installs with Calamares (build.sh), so Anaconda's would only be a second,
+    // broken installer next to it: leave its launchers out of the image, the running system keeps them.
+    if (c.distro.family == "fedora" && commandExists("calamares")) {
+        for (const char* e : {
+            "usr/share/applications/liveinst.desktop",
+            "usr/share/applications/anaconda.desktop",
+            "usr/share/applications/org.fedoraproject.AnacondaInstaller.desktop",
+            "etc/xdg/autostart/liveinst-setup.desktop",
+            "etc/xdg/autostart/anaconda-live.desktop",
+            "home/*/Desktop/liveinst.desktop", "home/*/Desktop/anaconda.desktop",
+            "home/*/Desktop/org.fedoraproject.AnacondaInstaller.desktop",
+            "root/Desktop/liveinst.desktop", "root/Desktop/anaconda.desktop",
+            "root/Desktop/org.fedoraproject.AnacondaInstaller.desktop",
+            "etc/skel/Desktop/liveinst.desktop", "etc/skel/Desktop/anaconda.desktop",
+            "etc/skel/Desktop/org.fedoraproject.AnacondaInstaller.desktop"
+        }) ex.push_back(e);
+    }
+
     if (c.cleanCache) {
         for (const auto& p : packageCaches(c.distro)) ex.push_back(p.rule);
         // per-user caches (browser caches etc.): only regenerable data, and files like Firefox's
@@ -622,8 +641,8 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
     }
 
     logNormal("Running: " + cmd);
-    // mksquashfs draws its progress bar on our terminal: print it in green
-    std::cout << COLOR_GREEN << std::flush;
+    // mksquashfs draws its progress bar on our terminal: print it in dark green
+    std::cout << COLOR_OUTPUT << std::flush;
     bool ok = runCommand(cmd) == 0;
     std::cout << COLOR_RESET << std::flush;
     logNormal("Unmounting bind mount...");

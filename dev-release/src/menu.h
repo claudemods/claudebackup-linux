@@ -279,7 +279,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
     FILE* dfPipe = popen("df -h / | tail -1", "r");
     if (dfPipe) {
         char buffer[256];
-        while (fgets(buffer, sizeof(buffer), dfPipe) != nullptr) menuBuffer += COLOR_GREEN + std::string(buffer) + COLOR_RESET;
+        while (fgets(buffer, sizeof(buffer), dfPipe) != nullptr) menuBuffer += COLOR_OUTPUT + std::string(buffer) + COLOR_RESET;
         pclose(dfPipe);
     }
     menuBuffer += "\n" + statusBlock();

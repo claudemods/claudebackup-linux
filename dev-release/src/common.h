@@ -42,6 +42,7 @@ const std::string SOURCE_TARBALL_DIR = "claudebackup-linux-main";   // top folde
 // ANSI color codes
 const std::string COLOR_RED    = "\033[31m";
 const std::string COLOR_GREEN  = "\033[92m";
+const std::string COLOR_OUTPUT = "\033[32m";   // dark green: the output of the commands we run
 const std::string COLOR_BLUE   = "\033[34m";
 const std::string COLOR_CYAN   = "\033[36m";
 const std::string COLOR_YELLOW = "\033[33m";
@@ -55,8 +56,8 @@ inline void logToFile(const std::string& tag, const std::string& msg) {
     if (f.is_open()) f << "[" << tag << "] " << msg << "\n";
 }
 
-// Steps ("[cbl] Mounting system to ...") are green like the commands' output; warnings and errors keep
-// their own colour so they stand out
+// Steps ("[cbl] Mounting system to ...") are light green, the commands' output is dark green; warnings
+// and errors keep their own colour so they stand out
 inline void logNormal(const std::string& msg)  { std::cout << COLOR_GREEN  << "[cbl] " << msg << COLOR_RESET << std::endl; logToFile("INFO", msg); }
 inline void logSuccess(const std::string& msg) { std::cout << COLOR_GREEN  << "[cbl] " << msg << COLOR_RESET << std::endl; logToFile("OK", msg); }
 inline void logWarning(const std::string& msg) { std::cout << COLOR_YELLOW << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("WARN", msg); }
@@ -165,9 +166,9 @@ inline int runPlain(const std::string& cmd) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-// Runs a command through the shell, its output flows to the terminal in green. Returns exit code.
+// Runs a command through the shell, its output flows to the terminal in dark green. Returns exit code.
 inline int runCommand(const std::string& cmd) {
-    std::cout << COLOR_GREEN << std::flush;
+    std::cout << COLOR_OUTPUT << std::flush;
     int rc = runPlain(cmd);
     std::cout << COLOR_RESET << std::flush;
     return rc;
