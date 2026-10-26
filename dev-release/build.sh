@@ -190,9 +190,17 @@ unpack_calamares_zips() {
     command -v unzip >/dev/null 2>&1 || die "unzip is not installed"
     rm -rf "$1"
     mkdir -p "$1"
-    say "Unpacking the Calamares files"
-    unzip -o -q "$SRC_DIR/resources/calamares-files.zip" -d "$1"
-    unzip -o -q "$SRC_DIR/resources/claudemods.zip" -d "$1/calamares-files"
+    say "Unpacking the Calamares files (from $(findmnt -T "$SRC_DIR" -no FSTYPE,SOURCE 2>/dev/null || echo "$SRC_DIR"))"
+    # </dev/null: unzip must never wait for a keypress; timeout: a stuck unzip falls back to python
+    # instead of hanging. Both zips are only ~26 MB.
+    for z in "calamares-files.zip:$1" "claudemods.zip:$1/calamares-files"; do
+        timeout 60 unzip -o "$SRC_DIR/resources/${z%%:*}" -d "${z#*:}" </dev/null >/dev/null ||
+            { say "unzip failed or hung, trying python's zipfile instead"
+              mkdir -p "${z#*:}"
+              timeout 120 python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+                  "$SRC_DIR/resources/${z%%:*}" "${z#*:}" </dev/null; } ||
+            die "unpacking resources/${z%%:*} failed"
+    done
 }
 
 # Arch: Calamares from the claudemods zips (port of cmiadvanced extrainstalls.sh)
