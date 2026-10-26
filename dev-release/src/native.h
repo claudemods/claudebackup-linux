@@ -692,7 +692,7 @@ inline bool runXorriso(const Context& c) {
     const std::string isolinuxBin = "isolinux/isolinux.bin";
     const std::string isolinuxCat = "isolinux/boot.cat";
     const std::string efiImg = "EFI/BOOT/efi.img";
-    const std::string isohdpfx = STAGING_DIR + "/bootloaders/ISOLINUX/isohdpfx.bin";
+    const std::string isohdpfx = BOOTLOADER_DIR + "/ISOLINUX/isohdpfx.bin";
 
     bool hasIsolinux = isRegularFile(c.isoDir + "/" + isolinuxBin) && isRegularFile(isohdpfx);
     bool hasEfi = isRegularFile(c.isoDir + "/" + efiImg);
@@ -713,21 +713,12 @@ inline bool runXorriso(const Context& c) {
 }
 
 // ---------------------------------------------------------------------------
-// Bootloader assets (utils/ensure-bootloaders.go)
+// Bootloader assets: downloaded by dev-release/build.sh into BOOTLOADER_DIR
 // ---------------------------------------------------------------------------
 inline bool ensureBootloaders() {
-    const std::string dir = STAGING_DIR + "/bootloaders";
-    if (pathExists(dir + "/.download-complete")) return true;
-
-    logNormal("Downloading bootloaders...");
-    runCommand("rm -rf " + shq(dir));
-    mkdirP(dir);
-    std::string cmd = "curl -fsSL " + shq(BOOTLOADER_URL) + " | tar -xz --strip-components=1 -C " + shq(dir);
-    if (runCommand(hostShell() + " -c " + shq("set -o pipefail; " + cmd)) != 0) {
-        runCommand("rm -rf " + shq(dir));
-        return false;
-    }
-    return writeFile(dir + "/.download-complete", "ok\n");
+    if (pathExists(BOOTLOADER_DIR + "/.download-complete")) return true;
+    logError("The bootloaders are not installed (" + BOOTLOADER_DIR + "): run dev-release/build.sh");
+    return false;
 }
 
 // Arch: unpacks the embedded build-image-arch-img.zip (ISO tree + hooks) to STAGING_DIR/arch.

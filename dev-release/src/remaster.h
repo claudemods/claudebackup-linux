@@ -96,9 +96,9 @@ inline std::string erofsPackage(const Distro& d) {
 // other distro uses zstd (its level is set in Setup)
 inline std::string compressionFor(const Distro& d) { return d.family == "gentoo" ? "gzip" : "zstd"; }
 
-// Boot files for the build: the embedded claudemods zip on Arch, downloaded bootloaders otherwise
+// Boot files for the build: the embedded claudemods zip on Arch, the bootloaders build.sh installed otherwise
 inline bool bootFilesReady(const Distro& d) {
-    return d.family == "archlinux" || pathExists(STAGING_DIR + "/bootloaders/.download-complete");
+    return d.family == "archlinux" || pathExists(BOOTLOADER_DIR + "/.download-complete");
 }
 
 inline bool prepareBootFiles(const Distro& d) {

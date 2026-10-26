@@ -30,8 +30,8 @@ const std::string CONFIG_DIR  = "/etc/claudebackup-linux";
 const std::string STAGING_DIR = "/tmp/cbl";
 const std::string DEFAULT_WORK_DIR = "/home/claudebackup";
 const std::string LOG_FILE    = "/var/log/claudebackup-linux.log";
-const std::string BOOTLOADER_URL =
-    "https://github.com/pieroproietti/penguins-bootloaders/releases/download/v26.1.16/bootloaders.tar.gz";
+// BIOS/UEFI boot files, downloaded by dev-release/build.sh (the app never downloads anything)
+const std::string BOOTLOADER_DIR = "/usr/local/share/claudebackup-linux/bootloaders";
 
 // Updates: the version on GitHub's main branch, and the source to build the update from
 const std::string REPO_URL           = "https://github.com/claudemods/claudebackup-linux";
@@ -41,7 +41,7 @@ const std::string SOURCE_TARBALL_DIR = "claudebackup-linux-main";   // top folde
 
 // ANSI color codes
 const std::string COLOR_RED    = "\033[31m";
-const std::string COLOR_GREEN  = "\033[32m";
+const std::string COLOR_GREEN  = "\033[92m";
 const std::string COLOR_BLUE   = "\033[34m";
 const std::string COLOR_CYAN   = "\033[36m";
 const std::string COLOR_YELLOW = "\033[33m";

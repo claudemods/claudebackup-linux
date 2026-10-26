@@ -24,7 +24,7 @@ std::mutex time_mutex;
 std::string current_time_str;
 std::atomic<bool> menu_needs_refresh(false);
 
-const std::string COLOR_HIGHLIGHT = "\033[32m";
+const std::string COLOR_HIGHLIGHT = "\033[92m";
 
 // Saved from the setup menu (~/.config/claudebackup-linux/configuration.txt)
 struct MenuConfig {
@@ -359,8 +359,7 @@ std::string guideText() {
                      pad + "squashfs or erofs), then builds and starts the app;\n" +
                      pad + "adds an 'Install' Desktop shortcut that opens Calamares" +
                      (gentoo ? "\n" + pad + "(fetches the gentoo repo / fixes the profile if needed)" : std::string()));
-    if (!arch) step("Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files");
-    else       step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
+    if (arch) step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
     step("Setup > ISO Name / Work / Output / Clone Directory   (blank ISO name = auto)");
     if (arch) step("Setup > ISO Tag                   volume label the live system boots from (default 2026)");
     if (!gentoo) step("Setup > zstd Compression Level    1-22, default 3 (higher = smaller, slower)");
@@ -633,11 +632,6 @@ void showEditMenu() {
 std::vector<SetupItem> setupItems() {
     const bool arch = onFamily("archlinux"), gentoo = onFamily("gentoo");
     std::vector<SetupItem> items;   // tools, Calamares and the Alpine installer tools come from build.sh
-    if (!arch) items.push_back({"Download Bootloaders", [] {
-        if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
-        else logError("Bootloader download failed.");
-        pressAnyKey();
-    }});
     if (arch) items.push_back({"mkinitcpio Config (11-dm-initramfs.rules)", [] {
         if (!remaster::ensureMkinitcpioConfig()) logError("mkinitcpio config setup failed.");
         pressAnyKey();

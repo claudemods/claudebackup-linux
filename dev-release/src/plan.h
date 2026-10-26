@@ -95,7 +95,7 @@ inline std::vector<Step> build(const Context& c) {
     // 2. Bootloader copy
     steps.push_back({"bootloader-copy", "Copy the bootloader assets (BIOS/UEFI)", [&c, iso]() {
         mkdirP(STAGING_DIR + "/scripts");
-        return native::runShell(scripts::render(scripts::BOOTLOADER_COPY), "", {STAGING_DIR + "/bootloaders", iso}) == 0;
+        return native::runShell(scripts::render(scripts::BOOTLOADER_COPY), "", {BOOTLOADER_DIR, iso}) == 0;
     }});
 
     // 3. EFI image
