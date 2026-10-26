@@ -5,8 +5,8 @@ LDLIBS   := -pthread
 TARGET := claudebackup-linux
 HDRS   := $(wildcard src/*.h)
 
-# claudemods zips (Arch ISO tree + Calamares), embedded by src/resources.h with .incbin
-ZIPS   := $(wildcard resources/*.zip)
+# The Arch ISO tree zip, embedded by src/resources.h with .incbin (the Calamares zips are used by build.sh)
+ZIPS   := resources/build-image-arch-img.zip
 
 $(TARGET): src/main.cpp $(HDRS) $(ZIPS)
 	$(CXX) $(CXXFLAGS) -o $@ src/main.cpp $(LDLIBS)
