@@ -405,11 +405,43 @@ EOF
 install_calamares_launcher() {
     cat > /usr/local/bin/claudebackup-calamares << 'EOF'
 #!/bin/sh
-# Opens Calamares as root (the "Install ..." desktop shortcut of the claudebackup live ISO)
-if [ "$(id -u)" -eq 0 ]; then exec calamares "$@"; fi
-if command -v calamares_polkit >/dev/null 2>&1; then exec calamares_polkit "$@"; fi
-exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" XDG_SESSION_TYPE="$XDG_SESSION_TYPE" calamares "$@"
+# Opens Calamares as root (the "Install ..." desktop shortcut of the claudebackup live ISO).
+# Everything goes to a log, and if Calamares does not start a message window says why, so a
+# desktop click never fails silently.
+LOG="/tmp/claudebackup-calamares-$(id -u).log"
+echo "=== $(date): starting Calamares (user $(id -un), session ${XDG_SESSION_TYPE:-?})" >> "$LOG"
+
+if [ "$(id -u)" -eq 0 ]; then
+    calamares -d "$@" >> "$LOG" 2>&1
+elif command -v calamares_polkit >/dev/null 2>&1; then
+    calamares_polkit -d "$@" >> "$LOG" 2>&1
+elif command -v pkexec >/dev/null 2>&1; then
+    # pkexec drops the environment; Calamares is a GUI and needs the session's display
+    pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+        XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" XDG_SESSION_TYPE="$XDG_SESSION_TYPE" \
+        calamares -d "$@" >> "$LOG" 2>&1
+else
+    echo "pkexec is not installed" >> "$LOG"
+    false
+fi
+RC=$?
+echo "=== exit code $RC" >> "$LOG"
+
+if [ "$RC" -ne 0 ]; then
+    case "$RC" in
+        126) MSG="Calamares was not started: the password prompt was cancelled or refused." ;;
+        127) MSG="Calamares was not started: a program was not found (calamares or pkexec)." ;;
+        *)   MSG="Calamares stopped with an error (exit code $RC)." ;;
+    esac
+    MSG="$MSG
+Details: $LOG
+(also ~/.cache/calamares/session.log of the user that ran it)"
+    kdialog --error "$MSG" 2>/dev/null ||
+        zenity --error --text="$MSG" 2>/dev/null ||
+        notify-send "Install" "$MSG" 2>/dev/null ||
+        xmessage "$MSG" 2>/dev/null || true
+fi
+exit "$RC"
 EOF
     chmod 755 /usr/local/bin/claudebackup-calamares
 }
@@ -502,7 +534,8 @@ add_desktop_shortcut() {
     if [ "$FAMILY" = alpine ]; then
         COMMENT="Install this cloned system to a disk (claudebackup-linux alpine)"
         ICON=drive-harddisk
-        if command -v konsole >/dev/null 2>&1; then EXEC="konsole -e $TARGET alpine"; IN_TERMINAL=false
+        # --hold: the window stays open, so the installer's output (or an error) can be read
+        if command -v konsole >/dev/null 2>&1; then EXEC="konsole --hold -e $TARGET alpine"; IN_TERMINAL=false
         else EXEC="$TARGET alpine"; IN_TERMINAL=true; fi          # no Konsole: the default terminal
     else
         COMMENT="Install this cloned system to a disk (Calamares)"
