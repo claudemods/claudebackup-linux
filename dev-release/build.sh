@@ -430,10 +430,34 @@ install_pkexec() {
     command -v pkexec >/dev/null 2>&1 || die "pkexec could not be installed - the Calamares shortcut needs it"
 }
 
-# Starts Calamares as root from the live desktop: Arch's calamares_polkit if there, otherwise
-# pkexec with the session's display (pkexec drops it, and Calamares is a GUI)
+# Starts Calamares as root from the live desktop through pkexec, keeping the session's display
+# (pkexec drops it, and Calamares is a GUI), via the root helper below
 install_calamares_launcher() {
     install_pkexec
+
+    # Root part: runs right before Calamares, in the live session. The image type chosen when
+    # Calamares was installed can differ from the ISO's real image (squashfs / erofs), and Calamares
+    # only accepts a type the kernel has loaded - so detect the real type, write it into the
+    # unpackfs config and load its module.
+    mkdir -p /usr/local/lib/claudebackup
+    cat > /usr/local/lib/claudebackup/calamares-root.sh << 'EOF'
+#!/bin/sh
+for conf in /etc/calamares/modules/unpackfs.conf /usr/share/calamares/modules/unpackfs.conf; do
+    [ -f "$conf" ] || continue
+    SRC=$(sed -n 's/^[[:space:]]*-[[:space:]]*source:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$conf" | head -n 1)
+    [ -f "$SRC" ] || continue
+    TYPE=$(blkid -p -o value -s TYPE "$SRC" 2>/dev/null || true)
+    case "$TYPE" in
+        squashfs|erofs)
+            echo "claudebackup: $SRC is $TYPE"
+            sed -i -E "s#^([[:space:]]*sourcefs:[[:space:]]*).*#\1\"$TYPE\"#" "$conf"
+            modprobe "$TYPE" 2>/dev/null || true ;;
+    esac
+done
+exec calamares "$@"
+EOF
+    chmod 755 /usr/local/lib/claudebackup/calamares-root.sh
+
     cat > /usr/local/bin/claudebackup-calamares << 'EOF'
 #!/bin/sh
 # Opens Calamares as root (the "Install ..." desktop shortcut of the claudebackup live ISO).
@@ -442,15 +466,15 @@ install_calamares_launcher() {
 LOG="/tmp/claudebackup-calamares-$(id -u).log"
 echo "=== $(date): starting Calamares (user $(id -un), session ${XDG_SESSION_TYPE:-?})" >> "$LOG"
 
+# The root helper matches Calamares' unpack settings to the ISO's real image, then starts it
+ROOT_HELPER=/usr/local/lib/claudebackup/calamares-root.sh
 if [ "$(id -u)" -eq 0 ]; then
-    calamares -d "$@" >> "$LOG" 2>&1
-elif command -v calamares_polkit >/dev/null 2>&1; then
-    calamares_polkit -d "$@" >> "$LOG" 2>&1
+    "$ROOT_HELPER" -d "$@" >> "$LOG" 2>&1
 elif command -v pkexec >/dev/null 2>&1; then
     # pkexec drops the environment; Calamares is a GUI and needs the session's display
     pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
         XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" XDG_SESSION_TYPE="$XDG_SESSION_TYPE" \
-        calamares -d "$@" >> "$LOG" 2>&1
+        "$ROOT_HELPER" -d "$@" >> "$LOG" 2>&1
 else
     echo "pkexec is not installed" >> "$LOG"
     false
