@@ -290,7 +290,7 @@ echo "-> Calamares installed (kernel preset: $PKGBASE). It installs from /run/ar
 // (no users page - the clone keeps its users) with the claudemods branding, unpacking the live
 // squashfs. Runs on the host, so the next ISO contains it.
 // $1 family, $2 extracted zips dir, $3 = 1 for btrfs zstd:22, $4 squashfs path in the live
-// session, $5 os-release ID (EFI boot entry name)
+// session, $5 os-release ID (EFI boot entry name), $6 image type (squashfs | erofs)
 inline const char* CALAMARES_SETUP_GENERIC = R"CDB(#!/bin/bash
 set -e
 
@@ -299,6 +299,7 @@ SRC="$2/calamares-files"
 BTRFS="${3:-0}"
 UNPACK="$4"
 DISTRO_ID="${5:-linux}"
+SOURCEFS="${6:-squashfs}"
 ARCH=$(uname -m)
 
 pkg_install() {
@@ -402,7 +403,7 @@ cat > "$MOD/unpackfs.conf" << EOF
 ---
 unpack:
     - source: "$UNPACK"
-      sourcefs: "squashfs"
+      sourcefs: "$SOURCEFS"
       destination: ""
 EOF
 

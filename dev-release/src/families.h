@@ -41,15 +41,20 @@ inline std::string bootParams(const Context& c) {
     if (f == "gentoo")
         return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.live.overlay.overlayfs=1 rd.shell";
     if (f == "alpine")
-        return "modules=loop,squashfs,sd-mod,usb-storage alpinelivelabel=" + LIVE_LABEL + " alpinelivesquashfs=filesystem.squashfs cow_spacesize=2G quiet";
+        return std::string("modules=loop,squashfs,") + (c.settings.imageFormat == "erofs" ? "erofs," : "") + "sd-mod,usb-storage alpinelivelabel=" + LIVE_LABEL + " alpinelivesquashfs=filesystem.squashfs cow_spacesize=2G quiet";
     return "";
 }
 
 // ---------------------------------------------------------------------------
 // Initramfs (runs chrooted in liveroot)
 // ---------------------------------------------------------------------------
-inline std::string initramfsDebian() {
-    return R"CDB(#!/bin/bash
+inline bool isErofs(const Context& c) { return c.settings.imageFormat == "erofs"; }
+
+// Extra kernel module the live initramfs needs to mount the image (erofs images only)
+inline std::string erofsDriver(const Context& c) { return isErofs(c) ? " erofs" : ""; }
+
+inline std::string initramfsDebian(const Context& c) {
+    std::string s = R"CDB(#!/bin/bash
 set -e
 # debian: initramfs
 KERNEL_VERSION=$(uname -r)
@@ -70,11 +75,17 @@ CONF_DIR=$(mktemp -d /tmp/cdb-initramfs.XXXXXX)
 trap 'rm -rf "$CONF_DIR"' EXIT
 cp -a /etc/initramfs-tools/. "$CONF_DIR/" 2>/dev/null || true
 touch "$CONF_DIR/modules"
-for mod in virtio_pci virtio_blk virtio_scsi isofs overlay; do
+for mod in virtio_pci virtio_blk virtio_scsi isofs overlay@@EROFS@@; do
     if ! grep -qs "^$mod" "$CONF_DIR/modules"; then
         echo "$mod" >> "$CONF_DIR/modules"
     fi
 done
+# Setup > Edit Configs > Initramfs Modules (staged by the build)
+if [ -f /tmp/cdb-initramfs.modules ]; then
+    echo "-> Adding the custom initramfs modules..."
+    grep -v '^[[:space:]]*#' /tmp/cdb-initramfs.modules >> "$CONF_DIR/modules" || true
+    rm -f /tmp/cdb-initramfs.modules
+fi
 
 mkinitramfs -d "$CONF_DIR" -o /boot/cdb-initrd.img "$KERNEL_VERSION"
 if [ ! -f /boot/cdb-initrd.img ]; then
@@ -82,6 +93,7 @@ if [ ! -f /boot/cdb-initrd.img ]; then
     exit 1
 fi
 )CDB";
+    return replaceAll(s, "@@EROFS@@", erofsDriver(c));
 }
 
 // Arch (host side, before the chroot): stage the zip's mkinitcpio.conf, 11-dm-initramfs.rules and
@@ -215,31 +227,38 @@ fi
     return s;
 }
 
-inline std::string initramfsFedora() {
-    return R"CDB(#!/bin/bash
-set -e
-# fedora: initramfs
-echo "Generating live initramfs (dracut)..."
-dracut -f --no-hostonly --add "dmsquash-live livenet" --add-drivers "sr_mod iso9660 squashfs loop overlay" /boot/cdb-initrd.img 2>&1 | tail -1
+// dracut's main config: the user's edited copy (Setup > Edit Configs > Dracut Config) when there is one
+inline const char* DRACUT_CUSTOM_CONF = R"CDB(
+DRACUT_CONF=""
+if [ -f /tmp/cdb-dracut.conf ]; then
+    echo "-> Using the custom dracut config."
+    DRACUT_CONF="--conf /tmp/cdb-dracut.conf"
+fi
 )CDB";
+
+inline std::string initramfsFedora(const Context& c) {
+    std::string s = std::string("#!/bin/bash\nset -e\n# fedora: initramfs\n") + DRACUT_CUSTOM_CONF + R"CDB(
+echo "Generating live initramfs (dracut)..."
+dracut -f --no-hostonly $DRACUT_CONF --add "dmsquash-live livenet" --add-drivers "sr_mod iso9660 squashfs loop overlay@@EROFS@@" /boot/cdb-initrd.img 2>&1 | tail -1
+rm -f /tmp/cdb-dracut.conf
+)CDB";
+    return replaceAll(s, "@@EROFS@@", erofsDriver(c));
 }
 
-inline std::string initramfsOpensuse() {
-    return R"CDB(#!/bin/bash
-set -e
-# opensuse: initramfs
+inline std::string initramfsOpensuse(const Context& c) {
+    std::string s = std::string("#!/bin/bash\nset -e\n# opensuse: initramfs\n") + DRACUT_CUSTOM_CONF + R"CDB(
 echo "Generating live initramfs (dracut)..."
 # Drivers for physical and virtual controllers (AHCI, VirtIO, IDE)
-dracut -f --no-hostonly --add "dmsquash-live livenet" --add-drivers "sr_mod iso9660 squashfs loop overlay ahci virtio_blk virtio_pci virtio_scsi cdrom ata_piix sd_mod" /boot/cdb-initrd.img
+dracut -f --no-hostonly $DRACUT_CONF --add "dmsquash-live livenet" --add-drivers "sr_mod iso9660 squashfs loop overlay@@EROFS@@ ahci virtio_blk virtio_pci virtio_scsi cdrom ata_piix sd_mod" /boot/cdb-initrd.img
+rm -f /tmp/cdb-dracut.conf
 )CDB";
+    return replaceAll(s, "@@EROFS@@", erofsDriver(c));
 }
 
 // Gentoo: dracut dmsquash-live, like Fedora. Kernels are often hand-configured, so first check
 // that the ones the live boot needs exist (as a module or built in) and say which option is missing.
-inline std::string initramfsGentoo() {
-    return R"CDB(#!/bin/bash
-set -e
-# gentoo: initramfs
+inline std::string initramfsGentoo(const Context& c) {
+    std::string s = std::string("#!/bin/bash\nset -e\n# gentoo: initramfs\n") + DRACUT_CUSTOM_CONF + R"CDB(
 KERNEL_VERSION=$(uname -r)
 if [ ! -d "/lib/modules/$KERNEL_VERSION" ]; then
     KERNEL_VERSION=$(ls -1 /lib/modules 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -n 1)
@@ -271,30 +290,34 @@ has_mod squashfs || MISSING="$MISSING CONFIG_SQUASHFS"
 has_mod overlay  || MISSING="$MISSING CONFIG_OVERLAY_FS"
 has_mod isofs    || MISSING="$MISSING CONFIG_ISO9660_FS"
 has_mod loop     || MISSING="$MISSING CONFIG_BLK_DEV_LOOP"
+@@EROFS_CHECK@@
 if [ -n "$MISSING" ]; then
     echo "[FATAL ERROR] kernel $KERNEL_VERSION cannot boot a live ISO, enable (=m or =y):$MISSING"
     echo "              then rebuild and install the kernel and run the build again."
     exit 1
 fi
 
-DRIVERS="iso9660 squashfs loop overlay"
+DRIVERS="iso9660 squashfs loop overlay@@EROFS@@"
 has_mod sr_mod && DRIVERS="sr_mod $DRIVERS"
 # multipath is not needed to boot a live ISO and fails on systems with multipath-tools installed
-if ! dracut -f --no-hostonly --add "dmsquash-live" --omit "multipath" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img; then
+if ! dracut -f --no-hostonly $DRACUT_CONF --add "dmsquash-live" --omit "multipath" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cdb-initrd.img; then
     echo "[FATAL ERROR] dracut could not build the live initramfs - see its messages above."
     echo "              Check: ls /usr/lib/dracut/modules.d | grep squash   (re-emerge sys-kernel/dracut if empty)"
     exit 1
 fi
+rm -f /tmp/cdb-dracut.conf
 if [ ! -f /boot/cdb-initrd.img ]; then
     echo "[FATAL ERROR] /boot/cdb-initrd.img was not generated!"
     exit 1
 fi
 )CDB";
+    s = replaceAll(s, "@@EROFS@@", erofsDriver(c));
+    return replaceAll(s, "@@EROFS_CHECK@@", isErofs(c) ? "has_mod erofs || MISSING=\"$MISSING CONFIG_EROFS_FS\"" : "");
 }
 
 // Alpine: patches the stock initramfs-init with a "sidecar" that mounts the live medium
 // when Alpine's own boot fails, then rebuilds with mkinitfs. (oa-alpine-mkinitfs-custom)
-inline std::string initramfsAlpine() {
+inline std::string initramfsAlpine(const Context& c) {
     std::string s = R"CDB(#!/bin/bash
 set -e
 INIT_FILE="/usr/share/mkinitfs/initramfs-init"
@@ -308,7 +331,7 @@ echo "-> 1. Generating the CDB-SIDECAR rescue (standard /run/live/medium)..."
 cat << 'EOF' > "$PATCH_FILE"
     echo ">>> [CDB-SIDECAR] Alpine boot failed. Starting claudemods rescue... <<<" > /dev/console
 
-    modprobe isofs squashfs loop overlay 2>/dev/null
+    modprobe isofs squashfs erofs loop overlay 2>/dev/null
 
     CMDLINE=$(cat /proc/cmdline)
     LABEL=$(echo "$CMDLINE" | tr ' ' '\n' | grep -o 'alpinelivelabel=[^ ]*' | cut -d= -f2)
@@ -328,7 +351,7 @@ cat << 'EOF' > "$PATCH_FILE"
         mount -t tmpfs tmpfs /live_data
         mkdir -p /live_data/medium /live_data/rootfs/filesystem.squashfs /live_data/overlay /sysroot
         mount -o ro "$ISO_DEV" /live_data/medium
-        if mount -t squashfs -o ro "/live_data/medium/live/filesystem.squashfs" /live_data/rootfs/filesystem.squashfs; then
+        if mount -t @@IMAGE_FS@@ -o ro "/live_data/medium/live/filesystem.squashfs" /live_data/rootfs/filesystem.squashfs; then
             mkdir -p /live_data/overlay/rw /live_data/overlay/work
             mount -t overlay overlay -o lowerdir=/live_data/rootfs/filesystem.squashfs,upperdir=/live_data/overlay/rw,workdir=/live_data/overlay/work /sysroot
             mkdir -p /sysroot/sys /sysroot/proc /sysroot/dev /sysroot/run
@@ -365,6 +388,7 @@ kernel/fs/squashfs
 kernel/fs/overlayfs
 kernel/fs/loop
 kernel/lib/libcrc32c*
+@@EROFS_MODULE@@
 MODULES
 
 echo 'features="ata base ide scsi cdrom usb virtio ext4 squashfs cdblive"' > /etc/mkinitfs/live.conf
@@ -375,23 +399,47 @@ mkinitfs -i "$CUSTOM_INIT" -c /etc/mkinitfs/live.conf -o /boot/initramfs-cdb "$K
 rm -f "$CUSTOM_INIT"
 echo "-> alpine initramfs completed."
 )CDB";
+    s = replaceAll(s, "@@IMAGE_FS@@", isErofs(c) ? "erofs" : "squashfs");
+    s = replaceAll(s, "@@EROFS_MODULE@@", isErofs(c) ? "kernel/fs/erofs" : "");
     return replaceAll(s, "@@LIVE_LABEL@@", LIVE_LABEL);
 }
 
 inline std::string initramfsCmd(const Context& c) {
     const std::string& f = c.distro.family;
-    if (f == "debian")   return initramfsDebian();
+    if (f == "debian")   return initramfsDebian(c);
     if (f == "archlinux") return initramfsArch();
-    if (f == "fedora")   return initramfsFedora();
-    if (f == "opensuse") return initramfsOpensuse();
-    if (f == "alpine")   return initramfsAlpine();
-    if (f == "gentoo")   return initramfsGentoo();
+    if (f == "fedora")   return initramfsFedora(c);
+    if (f == "opensuse") return initramfsOpensuse(c);
+    if (f == "alpine")   return initramfsAlpine(c);
+    if (f == "gentoo")   return initramfsGentoo(c);
     return "";
+}
+
+// The user's edited copy of a file from Setup > Edit Configs (empty path = none)
+inline std::string customFile(const Context& c, const std::string& name) {
+    if (c.customDir.empty()) return "";
+    std::string p = c.customDir + "/" + name;
+    return isRegularFile(p) ? p : "";
+}
+
+// Copies an edited config onto the liveroot tmpfs, where the chrooted initramfs script finds it
+inline std::string stageCustomCmd(const Context& c, const std::string& name, const std::string& staged) {
+    std::string src = customFile(c, name);
+    if (src.empty()) return "";
+    return "echo \"-> Using your edited " + name + "\"\ncp -f " + shq(src) + " " + shq(c.liveRoot + "/tmp/" + staged) + "\n";
 }
 
 // Host-side preparation run before initramfsCmd (empty = nothing to do)
 inline std::string initramfsPrepCmd(const Context& c) {
-    if (isArch(c)) return initramfsPrepArch(c);
+    const std::string& f = c.distro.family;
+    if (isArch(c)) {
+        std::string s = initramfsPrepArch(c);
+        std::string mk = customFile(c, "mkinitcpio.conf");
+        if (!mk.empty()) s += "echo \"-> Using your edited mkinitcpio.conf\"\ncp -f " + shq(mk) + " \"$DEST/mkinitcpio.conf\"\n";
+        return s;
+    }
+    if (f == "debian") return stageCustomCmd(c, "initramfs-modules", "cdb-initramfs.modules");
+    if (f == "fedora" || f == "opensuse" || f == "gentoo") return stageCustomCmd(c, "dracut.conf", "cdb-dracut.conf");
     return "";
 }
 

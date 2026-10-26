@@ -145,12 +145,20 @@ inline std::string baseName(const std::string& p) {
     return pos == std::string::npos ? p : p.substr(pos + 1);
 }
 
-// Runs a command through the shell, output flows to the terminal. Returns exit code.
-inline int runCommand(const std::string& cmd) {
+// Runs a command through the shell with no colour change (probes whose output is discarded)
+inline int runPlain(const std::string& cmd) {
     fflush(stdout);
     int status = system(cmd.c_str());
     if (status == -1) return -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+// Runs a command through the shell, its output flows to the terminal in green. Returns exit code.
+inline int runCommand(const std::string& cmd) {
+    std::cout << COLOR_GREEN << std::flush;
+    int rc = runPlain(cmd);
+    std::cout << COLOR_RESET << std::flush;
+    return rc;
 }
 
 // Runs a command and returns its stdout (trailing newline stripped)
@@ -167,7 +175,7 @@ inline std::string captureCommand(const std::string& cmd) {
 }
 
 inline bool commandExists(const std::string& name) {
-    return runCommand("command -v " + shq(name) + " >/dev/null 2>&1") == 0;
+    return runPlain("command -v " + shq(name) + " >/dev/null 2>&1") == 0;
 }
 
 #endif

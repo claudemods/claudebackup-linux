@@ -18,6 +18,61 @@ namespace plan {
 
 inline std::string scriptPath(const std::string& name) { return STAGING_DIR + "/scripts/" + name; }
 
+// Splash, theme and font files the boot menus refer to (non-Arch families)
+inline std::string bootAssetsCmd(const std::string& iso) {
+    return
+        "DEFAULT_BRANDING=" + CONFIG_DIR + "/branding.default/livecd\n"
+        "LIVECD_BRANDING=" + CONFIG_DIR + "/branding/livecd\n"
+        "[ -f \"$LIVECD_BRANDING/splash.png\" ] || LIVECD_BRANDING=$DEFAULT_BRANDING\n"
+        "[ -f \"$LIVECD_BRANDING/splash.png\" ] && cp -f \"$LIVECD_BRANDING/splash.png\" " + shq(iso + "/boot/grub/splash.png") + "\n"
+        "[ -f \"$LIVECD_BRANDING/splash.png\" ] && cp -f \"$LIVECD_BRANDING/splash.png\" " + shq(iso + "/isolinux/splash.png") + "\n"
+        "[ -f \"$LIVECD_BRANDING/grub.theme.cfg\" ] && cp -f \"$LIVECD_BRANDING/grub.theme.cfg\" " + shq(iso + "/boot/grub/theme.cfg") + "\n"
+        "[ -f \"$LIVECD_BRANDING/isolinux.theme.cfg\" ] && cp -f \"$LIVECD_BRANDING/isolinux.theme.cfg\" " + shq(iso + "/isolinux/isolinux.theme.cfg") + "\n"
+        "if [ -f /usr/share/grub/unicode.pf2 ]; then\n"
+        "    cp -f /usr/share/grub/unicode.pf2 " + shq(iso + "/boot/grub/font.pf2") + "\n"
+        "elif [ -f \"$LIVECD_BRANDING/unicode.pf2\" ]; then\n"
+        "    cp -f \"$LIVECD_BRANDING/unicode.pf2\" " + shq(iso + "/boot/grub/font.pf2") + "\n"
+        "fi\n"
+        "true\n";
+}
+
+// Writes grub.cfg, isolinux.cfg and the EFI trampoline into iso (non-Arch families)
+inline bool generateMenus(const Context& c, const std::string& iso) {
+    return native::runShell(scripts::render(scripts::GENERATE_MENUS), "", {iso, families::bootParams(c), c.ramModeEnabled ? "1" : "0"}) == 0;
+}
+
+// Files of Setup > Edit Configs that are copied over the generated ISO tree: name -> path inside the ISO
+struct EditTarget { const char* name; const char* isoPath; bool arch; };
+inline const std::vector<EditTarget>& editTargets() {
+    static const std::vector<EditTarget> t = {
+        {"grub.cfg",     "/boot/grub/grub.cfg",       true},
+        {"kernels.cfg",  "/boot/grub/kernels.cfg",    true},    // Arch only (boot text)
+        {"isolinux.cfg", "/isolinux/isolinux.cfg",    false},   // not Arch (boot text)
+    };
+    return t;
+}
+inline bool editApplies(const EditTarget& e, const Context& c) {
+    if (std::string(e.name) == "grub.cfg") return true;
+    return e.arch == families::isArch(c);
+}
+
+// Puts the user's edited boot files over the generated ones
+inline bool applyCustomEdits(const Context& c) {
+    int n = 0;
+    for (const auto& e : editTargets()) {
+        if (!editApplies(e, c)) continue;
+        std::string src = families::customFile(c, e.name);
+        if (src.empty()) continue;
+        std::string dst = c.isoDir + e.isoPath;
+        mkdirP(dirName(dst));
+        if (!writeFile(dst, readFile(src))) { logError(std::string("cannot write ") + dst); return false; }
+        logNormal(std::string("Using your edited ") + e.name);
+        n++;
+    }
+    if (n == 0) logNormal("No edited boot files.");
+    return true;
+}
+
 inline std::vector<Step> build(const Context& c) {
     std::vector<Step> steps;
     const std::string iso = c.isoDir;
@@ -61,27 +116,12 @@ inline std::vector<Step> build(const Context& c) {
 
     // 4. Boot assets
     steps.push_back({"boot-assets", "Copy the splash screen and configure the GRUB/ISOLINUX fonts", [iso]() {
-        std::string cmd =
-            "DEFAULT_BRANDING=" + CONFIG_DIR + "/branding.default/livecd\n"
-            "LIVECD_BRANDING=" + CONFIG_DIR + "/branding/livecd\n"
-            "[ -f \"$LIVECD_BRANDING/splash.png\" ] || LIVECD_BRANDING=$DEFAULT_BRANDING\n"
-            "[ -f \"$LIVECD_BRANDING/splash.png\" ] && cp -f \"$LIVECD_BRANDING/splash.png\" " + shq(iso + "/boot/grub/splash.png") + "\n"
-            "[ -f \"$LIVECD_BRANDING/splash.png\" ] && cp -f \"$LIVECD_BRANDING/splash.png\" " + shq(iso + "/isolinux/splash.png") + "\n"
-            "[ -f \"$LIVECD_BRANDING/grub.theme.cfg\" ] && cp -f \"$LIVECD_BRANDING/grub.theme.cfg\" " + shq(iso + "/boot/grub/theme.cfg") + "\n"
-            "[ -f \"$LIVECD_BRANDING/isolinux.theme.cfg\" ] && cp -f \"$LIVECD_BRANDING/isolinux.theme.cfg\" " + shq(iso + "/isolinux/isolinux.theme.cfg") + "\n"
-            "if [ -f /usr/share/grub/unicode.pf2 ]; then\n"
-            "    cp -f /usr/share/grub/unicode.pf2 " + shq(iso + "/boot/grub/font.pf2") + "\n"
-            "elif [ -f \"$LIVECD_BRANDING/unicode.pf2\" ]; then\n"
-            "    cp -f \"$LIVECD_BRANDING/unicode.pf2\" " + shq(iso + "/boot/grub/font.pf2") + "\n"
-            "fi\n"
-            "true\n";
-        return native::runShell(cmd, "") == 0;
+        return native::runShell(bootAssetsCmd(iso), "") == 0;
     }});
 
     // 5. Boot menus
     steps.push_back({"generate-boot-menus", "Dynamic generation of GRUB, ISOLINUX and EFI trampoline", [&c, iso]() {
-        std::string params = families::bootParams(c);
-        return native::runShell(scripts::render(scripts::GENERATE_MENUS), "", {iso, params, c.ramModeEnabled ? "1" : "0"}) == 0;
+        return generateMenus(c, iso);
     }});
 
     // 5.1 EFI grub.cfg into efi.img
@@ -90,6 +130,10 @@ inline std::vector<Step> build(const Context& c) {
         return native::runShell("if [ -f " + img + " ] && [ -f " + cfg + " ]; then\n    mcopy -i " + img + " -o " + cfg + " ::/EFI/BOOT/grub.cfg\nfi\n", "") == 0;
     }});
     }   // end non-Arch steps
+
+    // 5.2 The user's edited boot files (Setup > Edit Configs) go over the generated ones
+    if (!c.customDir.empty())
+        steps.push_back({"custom-edits", "Use the boot files edited in Setup > Edit Configs", [&c]() { return applyCustomEdits(c); }});
 
     // 8. Initramfs (chrooted; Arch first stages its hooks from the host)
     steps.push_back({"initramfs", "Live environment-specific initramfs generation", [&c, live]() {

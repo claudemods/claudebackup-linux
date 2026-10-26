@@ -416,15 +416,35 @@ inline int runWithErofsBar(const std::string& cmd, const std::string& output, co
     return rc;
 }
 
+// The live system boots the kernel it is built on, so erofs is only possible when that kernel has it
+// (built in, a module, or already loaded)
+inline bool kernelHasErofs() {
+    return runPlain("grep -qw erofs /proc/filesystems 2>/dev/null || modinfo erofs >/dev/null 2>&1 || "
+                    "grep -qs '/erofs.ko' \"/lib/modules/$(uname -r)/modules.builtin\"") == 0;
+}
+
+// zstd needs kernel 6.10+ (erofs zstd support); older kernels get lz4hc
+inline bool kernelHasErofsZstd() {
+    int major = 0, minor = 0;
+    return sscanf(captureCommand("uname -r").c_str(), "%d.%d", &major, &minor) == 2 && (major > 6 || (major == 6 && minor >= 10));
+}
+
+inline std::string erofsCompressionArgs() {
+    return kernelHasErofsZstd() ? "-zzstd -C 65536 --chunksize 65536" : "-zlz4hc -C 65536";
+}
+
+inline std::string erofsCompressionName() { return kernelHasErofsZstd() ? "zstd" : "lz4hc"; }
+
 inline bool runMkerofs(const Context& c, const std::string& dest) {
     if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (use Setup > Install Needed Tools)"); return false; }
+    if (!kernelHasErofs()) { logError("The running kernel has no erofs support (CONFIG_EROFS_FS), so a live ISO built from it could not boot an erofs image."); return false; }
 
     mkdirP(dirName(dest));
     unlink(dest.c_str());
     const std::string src = cloneDir(c);
     if (!bindRoot(src)) return false;
 
-    std::string cmd = "mkfs.erofs -zzstd -C 65536 --chunksize 65536 -T" + std::to_string((long long)time(nullptr)) +
+    std::string cmd = "mkfs.erofs " + erofsCompressionArgs() + " -T" + std::to_string((long long)time(nullptr)) +
         " --ignore-mtime" + erofsExcludeArgs(c) + " " + shq(dest) + " " + shq(src);
 
     logNormal("Running: " + cmd);
@@ -450,7 +470,7 @@ inline bool squashfsHasCompressor(const std::string& algo) {
 }
 
 inline bool runMksquashfs(const Context& c, const std::string& dest) {
-    if (c.distro.family == "archlinux" && c.settings.imageFormat == "erofs") return runMkerofs(c, dest);
+    if (c.settings.imageFormat == "erofs") return runMkerofs(c, dest);
 
     std::string algo = c.settings.compressionAlgo.empty() ? "zstd" : c.settings.compressionAlgo;
     if (algo != "gzip" && !squashfsHasCompressor(algo)) {

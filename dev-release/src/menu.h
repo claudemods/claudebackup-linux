@@ -34,7 +34,7 @@ struct MenuConfig {
     bool ramMode = true;
     std::string isoTag;        // Arch volume label, empty = 2026
     std::string cloneDir;      // <parent>/clone_system_temp, "/" is bound here; empty = default
-    std::string imageFormat = "squashfs";   // Arch only: squashfs | erofs
+    std::string imageFormat = "squashfs";   // squashfs | erofs
 };
 MenuConfig mcfg;
 
@@ -53,6 +53,8 @@ std::string defaultCloneDir() { return userHome() + "/clone_system_temp"; }
 
 std::string configDirPath() { return userHome() + "/.config/" + APP_BIN; }
 std::string configFilePath() { return configDirPath() + "/configuration.txt"; }
+// The user's edited copies of grub.cfg, kernels.cfg, ... (Setup > Edit Configs)
+std::string customDirPath() { return configDirPath() + "/custom"; }
 
 void saveConfig() {
     mkdirP(configDirPath());
@@ -97,6 +99,7 @@ RemasterOptions currentOptions() {
     o.isoTag = mcfg.isoTag;
     o.cloneDir = mcfg.cloneDir.empty() ? defaultCloneDir() : mcfg.cloneDir;
     o.imageFormat = mcfg.imageFormat;
+    o.customDir = customDirPath();
     return o;
 }
 
@@ -187,9 +190,17 @@ std::string checkLine(bool ok, const std::string& text) {
 }
 
 std::string compressionText() {
-    if (onFamily("archlinux") && mcfg.imageFormat == "erofs") return "erofs (mkfs.erofs zstd)";
+    if (mcfg.imageFormat == "erofs") return "erofs (mkfs.erofs " + native::erofsCompressionName() + ")";
     if (onFamily("gentoo")) return "squashfs gzip";
     return "squashfs zstd level " + std::to_string(mcfg.level);
+}
+
+// The edited files (Setup > Edit Configs) the next build will use, e.g. "grub.cfg, kernels.cfg"
+std::string customEditsText() {
+    std::string s;
+    for (const auto& f : remaster::customFilesFor(sysDistro()))
+        if (isRegularFile(customDirPath() + "/" + f.name)) s += (s.empty() ? "" : ", ") + f.name;
+    return s;
 }
 
 // Only the lines that apply to the running distro
@@ -201,6 +212,7 @@ std::string statusBlock() {
     s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? " (family: " + d.family + ")" : " (not supported)"));
     s += checkLine(toolsOk, "Needed Tools");
     s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
+    if (d.family == "archlinux") s += checkLine(remaster::mkinitcpioConfigReady(), "mkinitcpio Config");
     if (d.family == "archlinux")
         s += checkLine(!mcfg.isoTag.empty(), "ISO Tag: " + (mcfg.isoTag.empty() ? std::string("2026 (default)") : mcfg.isoTag));
     if (remaster::calamaresAvailable(d)) s += checkLine(commandExists("calamares"), "Calamares");
@@ -210,6 +222,8 @@ std::string statusBlock() {
     s += checkLine(true, "Output Directory: " + (mcfg.outputDir.empty() ? std::string("Work directory") : mcfg.outputDir));
     s += checkLine(!mcfg.cloneDir.empty(), "Clone Directory: " + (mcfg.cloneDir.empty() ? "Not set (uses " + defaultCloneDir() + ")" : mcfg.cloneDir));
     s += checkLine(true, "Image: " + compressionText());
+    std::string edits = customEditsText();
+    s += checkLine(!edits.empty(), "Edited Configs: " + (edits.empty() ? std::string("none (Setup > Edit Configs)") : edits));
     return s;
 }
 
@@ -326,13 +340,13 @@ std::string guideText() {
     else if (f == "fedora") step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, curl, dracut-live");
     else             step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl");
     if (!arch) step("Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files");
+    else       step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
     step("Setup > ISO Name / Work / Output / Clone Directory   (blank ISO name = auto)");
-    if (arch) {
-        step("Setup > zstd Level / Image Format squashfs (zstd) or erofs (mkfs.erofs zstd, kernel 6.10+)");
-        step("Setup > ISO Tag                   volume label the live system boots from (default 2026)");
-    } else if (!gentoo) {
-        step("Setup > zstd Compression Level    1-22, default 3 (higher = smaller, slower)");
-    }
+    if (arch) step("Setup > ISO Tag                   volume label the live system boots from (default 2026)");
+    if (!gentoo) step("Setup > zstd Compression Level    1-22, default 3 (higher = smaller, slower)");
+    step("Setup > Image Format              squashfs, or erofs (needs erofs-utils and a kernel with erofs;\n" +
+         pad + "zstd on kernel 6.10+, lz4hc on older ones)");
+    step("Setup > Edit Configs              optional: your own GRUB config, boot text and initramfs config");
     step(std::string("Setup > RAM Mode                  adds a ") + (arch ? "copytoram=y" : "toram") + " boot entry");
     if (alpine) step("Setup > Alpine Installer Tools    tools the live ISO needs to install the clone to disk\n" +
                      pad + "(do this BEFORE building, so the ISO contains them)");
@@ -454,7 +468,16 @@ void setupInstallTools() {
     if (cmd.empty()) std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
     else if (d.family == "gentoo" && !remaster::prepareGentooPortage())
         logError("Portage is not usable yet (see above), so nothing was emerged.");
-    else { std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl; runCommand(cmd); }
+    else {
+        std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
+        runCommand(cmd);
+        // erofs images need mkfs.erofs; Arch has it in the main list, elsewhere it is optional
+        if (d.family != "archlinux" && !commandExists("mkfs.erofs")) {
+            std::string e = remaster::packageInstallCommand(d, remaster::erofsPackage(d));
+            std::cout << COLOR_CYAN << "Running: " << e << COLOR_RESET << std::endl;
+            if (runCommand(e) != 0) logWarning("erofs-utils is not available here - only the squashfs image format will work.");
+        }
+    }
     pressAnyKey();
 }
 
@@ -488,11 +511,26 @@ void setupIsoTag() {
 }
 
 void setupImageFormat() {
-    std::cout << COLOR_GREEN << "Choose the system image type:\n"
-              << "1) Squashfs (mksquashfs zstd, Setup > zstd Compression Level)\n"
-              << "2) Erofs (mkfs.erofs -zzstd -C 65536 --chunksize 65536)" << COLOR_RESET << std::endl;
+    std::cout << COLOR_GREEN << "Choose the system image type (now: " << mcfg.imageFormat << "):\n"
+              << "1) Squashfs (" << (onFamily("gentoo") ? "mksquashfs gzip" : "mksquashfs zstd, Setup > zstd Compression Level") << ")\n"
+              << "2) Erofs (mkfs.erofs " << native::erofsCompressionArgs() << ")" << COLOR_RESET << std::endl;
     std::string f = getUserInput("Enter your choice (1 or 2): ");
-    if (f == "1" || f == "2") { mcfg.imageFormat = (f == "2") ? "erofs" : "squashfs"; saveConfig(); }
+    if (f == "2") {
+        // The live ISO boots this kernel, so it must be able to mount erofs
+        if (!native::kernelHasErofs()) {
+            std::cout << COLOR_RED << "This kernel has no erofs support (CONFIG_EROFS_FS), so an erofs live ISO would not boot. Keeping "
+                      << mcfg.imageFormat << "." << COLOR_RESET << std::endl;
+            pressAnyKey();
+            return;
+        }
+        if (!commandExists("mkfs.erofs"))
+            std::cout << COLOR_YELLOW << "mkfs.erofs is not installed yet - run Setup > Install Needed Tools." << COLOR_RESET << std::endl;
+        mcfg.imageFormat = "erofs";
+        saveConfig();
+    } else if (f == "1") {
+        mcfg.imageFormat = "squashfs";
+        saveConfig();
+    }
 }
 
 void setupAlpineInstallerTools() {
@@ -510,21 +548,108 @@ void setupCalamares() {
               << "1) Default configuration (Ext4)\n"
               << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
     bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
-    bool erofs = false;   // only Arch can build an erofs image
-    if (d.family == "archlinux") {
-        std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
-                  << "1) Default Cloned Squashfs System\n"
-                  << "2) Erofs Cloned System Image\n"
-                  << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
-        std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
-        erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
-    }
+    std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
+              << "1) Default Cloned Squashfs System\n"
+              << "2) Erofs Cloned System Image\n"
+              << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
+    std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
+    bool erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
     if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
     else logError("Calamares setup failed.");
     pressAnyKey();
 }
 
-// The Setup items for the running distro only (no Arch items on Gentoo, and so on)
+// ---------------------------------------------------------------------------
+// Setup > Edit Configs (from the claudemods multi iso creator: Edit GRUB Config, Edit Boot Text,
+// Edit Calamares Branding, Edit Calamares initcpio.conf, mkinitcpio Config). Only what applies to
+// this distro is listed: no mkinitcpio on Fedora, no Calamares files on Alpine, and so on.
+// ---------------------------------------------------------------------------
+std::string editorCommand() {
+    for (const char* e : {"nano", "vi", "vim"}) if (commandExists(e)) return e;
+    return "vi";
+}
+
+void openEditor(const std::string& path) {
+    runCommand("TERM=${TERM:-xterm-256color} " + editorCommand() + " " + shq(path));
+}
+
+// Our own copy of a boot / initramfs file: created from what the build generates, used by every build
+// until it is reset
+void editCustomFile(const remaster::CustomFile& f) {
+    const std::string path = customDirPath() + "/" + f.name;
+    if (!isRegularFile(path)) {
+        std::cout << COLOR_CYAN << "Creating your copy of " << f.name << " from what the build generates..." << COLOR_RESET << std::endl;
+        if (!remaster::seedCustomFile(remaster::makeContext(currentOptions()), f.name, path)) { pressAnyKey(); return; }
+    }
+    openEditor(path);
+    runPlain("chown -R " + shq(USERNAME) + " " + shq(customDirPath()) + " 2>/dev/null");
+    logSuccess(f.name + " saved - the next ISO build uses it (Reset Edited Configs undoes this).");
+    pressAnyKey();
+}
+
+// A file of the installed Calamares (edited in place: it is part of the system the ISO clones)
+void editSystemFile(const std::string& label, const std::string& path) {
+    if (!isRegularFile(path)) {
+        std::cout << COLOR_RED << path << " not found - run Setup > Install Calamares first." << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
+    openEditor(path);
+    logSuccess(label + " edited: " + path);
+    pressAnyKey();
+}
+
+void resetEditedConfigs() {
+    std::string have = customEditsText();
+    if (have.empty()) { std::cout << COLOR_CYAN << "Nothing edited." << COLOR_RESET << std::endl; pressAnyKey(); return; }
+    std::string ok = getUserInput("Delete your edited copies (" + have + ") and use the generated files again? (y/N): ");
+    if (ok == "y" || ok == "Y") {
+        for (const auto& f : remaster::customFilesFor(sysDistro())) unlink((customDirPath() + "/" + f.name).c_str());
+        logSuccess("Edited configs removed.");
+    }
+    pressAnyKey();
+}
+
+std::vector<SetupItem> editItems() {
+    const Distro& d = sysDistro();
+    std::vector<SetupItem> items;
+    for (const auto& f : remaster::customFilesFor(d)) {
+        bool edited = isRegularFile(customDirPath() + "/" + f.name);
+        items.push_back({f.label + (edited ? "  [edited]" : ""), [f] { editCustomFile(f); }});
+    }
+    if (remaster::calamaresAvailable(d)) {
+        const std::string etc = "/etc/calamares", share = "/usr/share/calamares";
+        items.push_back({"Edit Calamares Branding", [=] { editSystemFile("Calamares Branding", share + "/branding/claudemods/branding.desc"); }});
+        if (d.family == "archlinux") {
+            items.push_back({"Edit Calamares 1st initcpio.conf", [=] { editSystemFile("Calamares 1st initcpio.conf", etc + "/modules/initcpio.conf"); }});
+            items.push_back({"Edit Calamares 2nd initcpio.conf", [=] { editSystemFile("Calamares 2nd initcpio.conf", share + "/modules/initcpio.conf"); }});
+        } else {
+            items.push_back({"Edit Calamares settings.conf", [=] { editSystemFile("Calamares settings.conf", etc + "/settings.conf"); }});
+            for (const char* m : {"unpackfs", "partition", "bootloader", "initramfs"}) {
+                std::string name = std::string(m) + ".conf";
+                items.push_back({"Edit Calamares " + name, [=] { editSystemFile("Calamares " + name, etc + "/modules/" + name); }});
+            }
+        }
+    }
+    items.push_back({"Reset Edited Configs", resetEditedConfigs});
+    return items;
+}
+
+void showEditMenu() {
+    int selected = 0;
+    while (true) {
+        std::vector<SetupItem> items = editItems();
+        std::vector<std::string> labels;
+        for (const auto& i : items) labels.push_back(i.label);
+        labels.push_back("Back to Setup");
+        int pick = pickFromMenu("edit configs:", labels, selected);
+        if (pick == static_cast<int>(items.size())) return;
+        items[pick].run();
+    }
+}
+
+// The Setup items for the running distro only (no Arch items on Gentoo, and so on), in the order of
+// the claudemods multi iso creator: tools, then where things go (clone, tag, name, output), then the rest
 std::vector<SetupItem> setupItems() {
     const bool arch = onFamily("archlinux"), gentoo = onFamily("gentoo"), alpine = onFamily("alpine");
     std::vector<SetupItem> items;
@@ -534,19 +659,24 @@ std::vector<SetupItem> setupItems() {
         else logError("Bootloader download failed.");
         pressAnyKey();
     }});
+    if (arch) items.push_back({"mkinitcpio Config (11-dm-initramfs.rules)", [] {
+        if (!remaster::ensureMkinitcpioConfig()) logError("mkinitcpio config setup failed.");
+        pressAnyKey();
+    }});
+    items.push_back({"Set Clone Directory (system is bind-mounted here)", setupCloneDir});
+    if (arch) items.push_back({"Set ISO Tag (volume label, default 2026)", setupIsoTag});
     items.push_back({"Set ISO Name (blank = auto)", [] { mcfg.isoName = getUserInput("ISO name (e.g. my-backup.iso, blank = auto): "); saveConfig(); }});
     items.push_back({"Set Work Directory", [] { mcfg.workDir = getUserInput("Work directory (blank = " + DEFAULT_WORK_DIR + "): "); saveConfig(); }});
     items.push_back({"Set Output Directory", [] { mcfg.outputDir = getUserInput("Output directory (blank = work directory): "); saveConfig(); }});
-    items.push_back({"Set Clone Directory (system is bind-mounted here)", setupCloneDir});
     if (!gentoo) items.push_back({"Set zstd Compression Level", [] {
         int l = atoi(getUserInput("zstd level (1-22, default 3): ").c_str());
         if (l >= 1 && l <= 22) { mcfg.level = l; saveConfig(); }
     }});
-    if (arch) items.push_back({"Set Image Format (squashfs / erofs)", setupImageFormat});
+    if (sysDistro().supported()) items.push_back({"Set Image Format (squashfs / erofs)", setupImageFormat});
     items.push_back({"Toggle RAM Mode Boot Entry", [] { mcfg.ramMode = !mcfg.ramMode; saveConfig(); }});
-    if (arch) items.push_back({"Set ISO Tag (volume label, default 2026)", setupIsoTag});
     if (alpine) items.push_back({"Alpine Installer Tools (to install the clone back to disk)", setupAlpineInstallerTools});
     else if (sysDistro().supported()) items.push_back({"Install Calamares (ext4 / btrfs zstd:22)", setupCalamares});
+    if (sysDistro().supported()) items.push_back({"Edit Configs (GRUB, boot text, initramfs, Calamares)", showEditMenu});
     return items;
 }
 
@@ -631,7 +761,8 @@ int countLines(const std::string& s) { return static_cast<int>(std::count(s.begi
 
 int requiredRows() {
     const int header = 8 + 3 + 1 + 2 + 1;              // banner, 3 text lines, clock, df header + line, blank
-    int items = std::max(static_cast<int>(mainMenuItems().size()), static_cast<int>(setupItems().size()) + 1);
+    int items = std::max({static_cast<int>(mainMenuItems().size()), static_cast<int>(setupItems().size()) + 1,
+                          static_cast<int>(editItems().size()) + 1});
     int menuScreen = header + countLines(statusBlock()) + 3 + items + 1;   // + title, underline, cursor line
     int guideScreen = 2 + countLines(guideText()) + 2;                     // + heading, "Press any key"
     return std::max(menuScreen, guideScreen);
