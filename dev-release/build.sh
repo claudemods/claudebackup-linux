@@ -6,6 +6,8 @@
 #      Gentoo: the distro's package + a full-clone config), or on Alpine the tools of its
 #      "Install Cloned System To Disk" installer (Calamares does not run on Alpine)
 #   4. builds with make, installs the binary and launches it
+#   5. puts an "Install <distro>" shortcut on the Desktop (Calamares, or on Alpine Konsole running
+#      "claudebackup-linux alpine"), so the live ISO's desktop has it
 # Plain POSIX sh, so it also runs on a stock Alpine (sh build.sh) without bash.
 # Run it from anywhere; it builds from its own folder (dev-release).
 set -e
@@ -53,6 +55,8 @@ detect_family() {
     done
     [ -n "$FAMILY" ] || die "unsupported distro: ${PRETTY_NAME:-${ID:-unknown}}"
     DISTRO_ID="$(printf '%s' "${ID:-linux}" | tr '[:upper:]' '[:lower:]')"
+    # What messages call the distro: its own name (e.g. "KDE neon 6.4"), not the family
+    DISTRO_NAME="${PRETTY_NAME:-${NAME:-${ID:-Linux}}}"
 }
 
 # =============================================================================
@@ -99,7 +103,7 @@ gentoo_prepare_portage() {
 
 # Build tools (compiler, make) + the host tools the ISO build runs, per distro
 install_host_tools() {
-    say "Installing build and host tools for $FAMILY"
+    say "Installing build and host tools for $DISTRO_NAME"
     case "$FAMILY" in
         debian)
             apt-get update
@@ -198,7 +202,7 @@ install_calamares_generic() {
         *)      UNPACK=/run/initramfs/live/LiveOS/squashfs.img ;;     # dracut dmsquash-live
     esac
 
-    say "Installing Calamares, GRUB and rsync for $FAMILY"
+    say "Installing Calamares, GRUB and rsync for $DISTRO_NAME"
     case "$FAMILY" in
         debian)
             PKGS="calamares rsync efibootmgr dosfstools"
@@ -393,14 +397,28 @@ requirements:
         - storage
         - root
 EOF
-    say "Calamares configured for $FAMILY (unpacks $UNPACK as $SOURCEFS, $FSTYPE default, $GRUB)"
+    say "Calamares configured for $DISTRO_NAME (unpacks $UNPACK as $SOURCEFS, $FSTYPE default, $GRUB)"
+}
+
+# Starts Calamares as root from the live desktop: Arch's calamares_polkit if there, otherwise
+# pkexec with the session's display (pkexec drops it, and Calamares is a GUI)
+install_calamares_launcher() {
+    cat > /usr/local/bin/claudebackup-calamares << 'EOF'
+#!/bin/sh
+# Opens Calamares as root (the "Install ..." desktop shortcut of the claudebackup live ISO)
+if [ "$(id -u)" -eq 0 ]; then exec calamares "$@"; fi
+if command -v calamares_polkit >/dev/null 2>&1; then exec calamares_polkit "$@"; fi
+exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" XDG_SESSION_TYPE="$XDG_SESSION_TYPE" calamares "$@"
+EOF
+    chmod 755 /usr/local/bin/claudebackup-calamares
 }
 
 # Called through as_root: $1 family, $2 calamares (1/0), $3 btrfs (1/0), $4 erofs (1/0),
 # $5 alpine installer tools (1/0)
 root_phase() {
     detect_family
-    [ "$1" = "$FAMILY" ] || die "distro changed between phases ($1 / $FAMILY)"
+    [ "$1" = "$FAMILY" ] || die "the distro detected as root differs ($DISTRO_NAME)"
     install_host_tools
     install_erofs_utils
     if [ "$FAMILY" = alpine ]; then
@@ -411,6 +429,7 @@ root_phase() {
         if [ "$FAMILY" = arch ]; then install_calamares_arch "$WORK" "$3" "$4"
         else install_calamares_generic "$WORK" "$3" "$4"; fi
         rm -rf "$WORK"
+        install_calamares_launcher
     fi
 }
 
@@ -426,7 +445,7 @@ fi
 [ -f "$SRC_DIR/Makefile" ] || die "Makefile not found next to build.sh (keep build.sh in dev-release)"
 [ "$(uname -s)" = "Linux" ] || die "this project only builds on Linux"
 detect_family
-say "Detected ${PRETTY_NAME:-$ID} (family: $FAMILY)"
+say "Detected $DISTRO_NAME"
 
 # yes/no question; $2 is the default (y/n); no terminal = the default
 ask() {
@@ -462,6 +481,54 @@ elif ask "Install Calamares, so the live ISO can install itself to a disk? [Y/n]
     [ "$(choose "Enter your choice (1 or 2):")" = 2 ] && EROFS=1
 fi
 
+# The user whose Desktop gets the shortcut (also when build.sh itself was started through sudo/doas)
+DESK_USER=""
+DESK_HOME="$HOME"
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-${DOAS_USER:-}}" ]; then
+    DESK_USER="${SUDO_USER:-$DOAS_USER}"
+    DESK_HOME=$(awk -F: -v u="$DESK_USER" '$1 == u { print $6 }' /etc/passwd)
+    [ -n "$DESK_HOME" ] || DESK_HOME="/home/$DESK_USER"
+fi
+
+# Puts an "Install <distro>" shortcut on the Desktop: it is part of the clone, so the live ISO's
+# desktop has it. Calamares distros open Calamares; Alpine opens Konsole running the Alpine installer.
+add_desktop_shortcut() {
+    DIR=""
+    if command -v xdg-user-dir >/dev/null 2>&1; then DIR=$(HOME="$DESK_HOME" xdg-user-dir DESKTOP 2>/dev/null || true); fi
+    if [ -z "$DIR" ] || [ "$DIR" = "$DESK_HOME" ]; then DIR="$DESK_HOME/Desktop"; fi
+    mkdir -p "$DIR"
+    FILE="$DIR/claudebackup-install.desktop"
+
+    if [ "$FAMILY" = alpine ]; then
+        COMMENT="Install this cloned system to a disk (claudebackup-linux alpine)"
+        ICON=drive-harddisk
+        if command -v konsole >/dev/null 2>&1; then EXEC="konsole -e $TARGET alpine"; IN_TERMINAL=false
+        else EXEC="$TARGET alpine"; IN_TERMINAL=true; fi          # no Konsole: the default terminal
+    else
+        COMMENT="Install this cloned system to a disk (Calamares)"
+        ICON=calamares
+        EXEC=/usr/local/bin/claudebackup-calamares
+        IN_TERMINAL=false
+    fi
+
+    cat > "$FILE" << EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install $DISTRO_NAME
+Comment=$COMMENT
+Exec=$EXEC
+Icon=$ICON
+Terminal=$IN_TERMINAL
+Categories=System;
+EOF
+    chmod 755 "$FILE"
+    # GNOME only starts desktop launchers that are marked trusted
+    if command -v gio >/dev/null 2>&1; then gio set "$FILE" metadata::trusted true 2>/dev/null || true; fi
+    if [ -n "$DESK_USER" ]; then chown "$DESK_USER" "$DIR" "$FILE" 2>/dev/null || true; fi
+    say "Added 'Install $DISTRO_NAME' to $DIR"
+}
+
 say "Installing packages as root"
 as_root sh "$SELF" --root-phase "$FAMILY" "$CALAMARES" "$BTRFS" "$EROFS" "$ALPINE_TOOLS"
 
@@ -471,6 +538,8 @@ make -C "$SRC_DIR" -j"$(nproc 2>/dev/null || echo 1)"
 say "Installing $TARGET"
 as_root make -C "$SRC_DIR" install
 command -v "$TARGET" >/dev/null 2>&1 || die "$TARGET is not on PATH after install"
+
+if [ "$CALAMARES" = 1 ] || [ "$ALPINE_TOOLS" = 1 ]; then add_desktop_shortcut; fi
 
 say "Launching $TARGET"
 exec "$TARGET"
