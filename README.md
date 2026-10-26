@@ -75,7 +75,7 @@ Gentoo kernels need `CONFIG_SQUASHFS`, `CONFIG_OVERLAY_FS`, `CONFIG_ISO9660_FS` 
 - [x] Gather knowledge 📖
 - [x] Make a new project called **claudebackup-linux** 🔧 from existing functions in **claudemods-multi-iso-konsole-script** ⚙️
 
-## Stage 2 squashfs support 🐧📍
+## Stage 2 squashfs support 🐧📍✅
 Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
 - [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
 - [x] Debian 🔴 — [x] boots from tests — [x] installation support ✅
