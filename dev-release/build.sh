@@ -118,7 +118,9 @@ install_host_tools() {
         fedora)
             dnf install -y gcc-c++ make squashfs-tools xorriso mtools dosfstools curl tar unzip dracut-live ;;
         opensuse)
-            zypper --non-interactive install gcc-c++ make squashfs xorriso mtools dosfstools curl tar unzip ;;
+            # refresh the repositories once; the later zypper calls reuse that metadata (--no-refresh)
+            zypper --non-interactive refresh || true
+            zypper --non-interactive --no-refresh install --no-recommends gcc-c++ make squashfs xorriso mtools dosfstools curl tar unzip ;;
         alpine)
             apk add build-base squashfs-tools xorriso mtools dosfstools curl tar ;;
         gentoo)
@@ -135,7 +137,7 @@ install_erofs_utils() {
     case "$FAMILY" in
         debian)   apt-get install -y erofs-utils ;;
         fedora)   dnf install -y erofs-utils ;;
-        opensuse) zypper --non-interactive install erofs-utils ;;
+        opensuse) zypper --non-interactive --no-refresh install --no-recommends erofs-utils ;;
         alpine)   apk add erofs-utils ;;
         gentoo)   emerge --noreplace --ask=n sys-fs/erofs-utils ;;
     esac || say "erofs-utils is not available here - only the squashfs image format will work"
@@ -151,7 +153,7 @@ install_bootloaders() {
     say "Downloading the bootloaders (BIOS/UEFI boot files for the live ISO)"
     rm -rf "$BOOTLOADER_DIR"
     mkdir -p "$BOOTLOADER_DIR"
-    if curl -fsSL "$BOOTLOADER_URL" -o "$BOOTLOADER_DIR.tar.gz" &&
+    if curl -fL --progress-bar --connect-timeout 20 --retry 3 --speed-time 30 --speed-limit 1024 "$BOOTLOADER_URL" -o "$BOOTLOADER_DIR.tar.gz" &&
        tar -xzf "$BOOTLOADER_DIR.tar.gz" --strip-components=1 -C "$BOOTLOADER_DIR"; then
         echo ok > "$BOOTLOADER_DIR/.download-complete"
         rm -f "$BOOTLOADER_DIR.tar.gz"
@@ -188,6 +190,7 @@ unpack_calamares_zips() {
     command -v unzip >/dev/null 2>&1 || die "unzip is not installed"
     rm -rf "$1"
     mkdir -p "$1"
+    say "Unpacking the Calamares files"
     unzip -o -q "$SRC_DIR/resources/calamares-files.zip" -d "$1"
     unzip -o -q "$SRC_DIR/resources/claudemods.zip" -d "$1/calamares-files"
 }
@@ -257,7 +260,7 @@ install_calamares_generic() {
             PKGS="calamares rsync efibootmgr dosfstools"
             [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-i386-pc grub2-x86_64-efi"
             # shellcheck disable=SC2086
-            zypper --non-interactive install $PKGS || die "Calamares install failed"
+            zypper --non-interactive --no-refresh install --no-recommends $PKGS || die "Calamares install failed"
             GRUB=grub2; INITRAMFS=dracut ;;
         gentoo)
             # app-admin/calamares can be keyworded testing-only (~arch): accept it for this one
@@ -518,7 +521,7 @@ install_pkexec() {
         debian)   apt-get install -y pkexec || apt-get install -y policykit-1 ;;
         arch)     pacman -S --needed --noconfirm polkit ;;
         fedora)   dnf install -y polkit ;;
-        opensuse) zypper --non-interactive install polkit ;;
+        opensuse) zypper --non-interactive --no-refresh install --no-recommends polkit ;;
         gentoo)   emerge --noreplace --ask=n sys-auth/polkit ;;
     esac || true
     command -v pkexec >/dev/null 2>&1 || die "pkexec could not be installed - the Calamares shortcut needs it"
