@@ -16,11 +16,11 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 SRC_DIR="$(dirname "$SELF")"
 TARGET="claudebackup-linux"
 
-# Messages and the output of the commands after them are green (like the app); "==>" stays red,
-# errors are red. say() leaves the terminal green, so the commands' output that follows is green too.
-say() { printf '\033[1;31m==>\033[0;92m %s\n' "$*"; }
+# Messages are light green (like the app's [cbl] lines), the output of the commands after them is
+# dark green; "==>" and errors are red. say() leaves the terminal dark green for the commands' output.
+say() { printf '\033[1;31m==>\033[0;92m %s\033[0;32m\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-printf '\033[92m'
+printf '\033[32m'
 
 # Single-quote one argument for a shell command line (for su -c)
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -296,7 +296,10 @@ install_calamares_generic() {
     # --- settings.conf -------------------------------------------------------
     EXEC="partition mount unpackfs"
     [ "$SYSTEMD" = 1 ] && EXEC="$EXEC machineid"
-    EXEC="$EXEC fstab locale keyboard localecfg shellprocess@cblkernel $INITRAMFS grubcfg bootloader umount"
+    EXEC="$EXEC fstab locale keyboard localecfg shellprocess@cblkernel $INITRAMFS grubcfg bootloader"
+    # Fedora: after the boot loader, fix what the clone carries over from the old system (boot entries)
+    [ "$FAMILY" = fedora ] && EXEC="$EXEC shellprocess@cblfedora"
+    EXEC="$EXEC umount"
     {
         echo "---"
         echo "modules-search: [ local ]"
@@ -304,6 +307,11 @@ install_calamares_generic() {
         echo "- id: cblkernel"
         echo "  module: shellprocess"
         echo "  config: shellprocess_cblkernel.conf"
+        if [ "$FAMILY" = fedora ]; then
+            echo "- id: cblfedora"
+            echo "  module: shellprocess"
+            echo "  config: shellprocess_cblfedora.conf"
+        fi
         echo "sequence:"
         echo "- show:"
         for m in welcome locale keyboard partition summary; do echo "  - $m"; done
@@ -413,6 +421,69 @@ EOF
     chmod 755 "$CFG/scripts/cbl-kernel.sh"
     printf '%s\n' '---' 'dontChroot: true' 'timeout: 600' 'script:' '    - "/etc/calamares/scripts/cbl-kernel.sh"' \
         > "$MOD/shellprocess_cblkernel.conf"
+
+    if [ "$FAMILY" = fedora ]; then
+        # The clone's boot entries, /etc/kernel/cmdline and /etc/default/grub still name the OLD
+        # system's root (UUID, btrfs subvolume, live options): the installed system then hangs
+        # after Plymouth with a blank screen. Rewrite them for the disk Calamares just installed to,
+        # rebuild the initramfs and boot entries, and let SELinux relabel the copied files.
+        cat > "$CFG/scripts/cbl-fedora.sh" << 'EOF'
+#!/bin/sh
+R="${1:-}"
+[ -n "$R" ] || R=$(awk '$2 ~ /^\/tmp\/calamares-root-[^\/]*$/ {print $2}' /proc/mounts | head -n 1)
+[ -d "$R" ] || { echo "cbl-fedora: target root not found"; exit 1; }
+chroot "$R" /bin/sh -s << 'CHROOT'
+ROOT_UUID=$(findmnt -no UUID / 2>/dev/null)
+FSTYPE=$(findmnt -no FSTYPE / 2>/dev/null)
+FSROOT=$(findmnt -no FSROOT / 2>/dev/null | sed 's/\[.*//')
+[ -n "$ROOT_UUID" ] || { echo "cbl-fedora: root UUID not found, leaving the boot entries alone"; exit 0; }
+ARGS="root=UUID=$ROOT_UUID ro"
+if [ "$FSTYPE" = btrfs ] && [ -n "$FSROOT" ] && [ "$FSROOT" != "/" ]; then
+    ARGS="$ARGS rootflags=subvol=${FSROOT#/}"
+fi
+echo "cbl-fedora: kernel command line: $ARGS rhgb quiet"
+
+mkdir -p /etc/kernel
+echo "$ARGS rhgb quiet" > /etc/kernel/cmdline
+
+# Drop the old system's root / live options from GRUB_CMDLINE_LINUX
+if [ -f /etc/default/grub ]; then
+    sed -i -E '/^GRUB_CMDLINE_LINUX=/{
+        s/(^|[ "])(root|rootflags|resume|rd\.lvm\.lv|rd\.luks\.[a-z.]+|rd\.live\.[a-z.]+|rd\.md\.uuid)=[^ "]*/\1/g
+        s/[[:space:]]+rd\.live\.image//g
+        s/[[:space:]]+(root=live:[^ "]*)//g
+        s/[[:space:]]+/ /g
+    }' /etc/default/grub
+fi
+
+# The UEFI stub (/boot/efi/EFI/fedora/grub.cfg) finds /boot by UUID: point it at the new one
+BOOT_UUID=$(findmnt -no UUID /boot 2>/dev/null)
+[ -n "$BOOT_UUID" ] || BOOT_UUID="$ROOT_UUID"
+for stub in /boot/efi/EFI/fedora/grub.cfg; do
+    [ -f "$stub" ] && sed -i -E "s/(--fs-uuid[[:space:]]+--set=[a-z]+[[:space:]]+)[^ ]+/\1$BOOT_UUID/" "$stub"
+done
+
+# Fresh boot entries + initramfs for every installed kernel (kernel-install runs dracut)
+rm -f /boot/loader/entries/*.conf
+for d in /usr/lib/modules/*/; do
+    KV=$(basename "$d")
+    IMG="$d/vmlinuz"
+    [ -f "$IMG" ] || IMG="/boot/vmlinuz-$KV"
+    [ -f "$IMG" ] || continue
+    kernel-install add "$KV" "$IMG" || dracut -f --kver "$KV" "/boot/initramfs-$KV.img" || true
+done
+[ -x /usr/sbin/grub2-mkconfig ] && grub2-mkconfig -o /boot/grub2/grub.cfg 2>&1 | tail -n 3
+
+# Boot to the graphical login, and relabel the copied files on the first boot
+systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+touch /.autorelabel
+exit 0
+CHROOT
+EOF
+        chmod 755 "$CFG/scripts/cbl-fedora.sh"
+        printf '%s\n' '---' 'dontChroot: true' 'timeout: 900' 'script:' '    - "/etc/calamares/scripts/cbl-fedora.sh"' \
+            > "$MOD/shellprocess_cblfedora.conf"
+    fi
 
     REBOOT="reboot"
     [ "$SYSTEMD" = 1 ] && REBOOT="systemctl -i reboot"
@@ -560,7 +631,7 @@ say "Detected $DISTRO_NAME"
 # yes/no question; $2 is the default (y/n); no terminal = the default
 ask() {
     if [ ! -t 0 ]; then [ "$2" = y ]; return; fi
-    printf '\033[1;92m%s\033[0;92m ' "$1"
+    printf '\033[1;92m%s\033[0;32m ' "$1"
     read -r reply
     reply=$(printf '%s' "${reply:-$2}" | tr '[:upper:]' '[:lower:]')
     [ "$reply" = y ] || [ "$reply" = yes ]
@@ -568,7 +639,7 @@ ask() {
 # choice of 1/2; prints 1 or 2 (default 1)
 choose() {
     if [ ! -t 0 ]; then echo 1; return; fi
-    printf '\033[1;92m%s\033[0;92m ' "$1" >&2
+    printf '\033[1;92m%s\033[0;32m ' "$1" >&2
     read -r reply
     [ "$reply" = 2 ] && echo 2 || echo 1
 }
@@ -597,6 +668,9 @@ if [ "$FAMILY" = alpine ]; then
     fi
 elif ask "Install Calamares, so the live ISO can install itself to a disk? [Y/n]" y; then
     CALAMARES=1
+    if [ "$FAMILY" = fedora ]; then
+        say "Fedora: Calamares replaces Anaconda - Anaconda's installer shortcuts are left out of the ISO"
+    fi
     echo "Calamares configuration for system install:"
     echo "  1) Default configuration (Ext4)"
     echo "  2) Custom configuration with btrfs level 22 compression"
@@ -615,12 +689,6 @@ fi
 # Puts an "Install <distro>" shortcut on the Desktop: it is part of the clone, so the live ISO's
 # desktop has it. Calamares distros open Calamares; Alpine opens Konsole running the Alpine installer.
 add_desktop_shortcut() {
-    DIR=""
-    if command -v xdg-user-dir >/dev/null 2>&1; then DIR=$(HOME="$DESK_HOME" xdg-user-dir DESKTOP 2>/dev/null || true); fi
-    if [ -z "$DIR" ] || [ "$DIR" = "$DESK_HOME" ]; then DIR="$DESK_HOME/Desktop"; fi
-    mkdir -p "$DIR"
-    FILE="$DIR/claudebackup-install.desktop"
-
     if [ "$FAMILY" = alpine ]; then
         COMMENT="Install this cloned system to a disk (claudebackup-linux alpine)"
         ICON=drive-harddisk
@@ -634,8 +702,7 @@ add_desktop_shortcut() {
         IN_TERMINAL=false
     fi
 
-    cat > "$FILE" << EOF
-[Desktop Entry]
+    ENTRY="[Desktop Entry]
 Type=Application
 Version=1.0
 Name=Install $DISTRO_NAME
@@ -643,13 +710,35 @@ Comment=$COMMENT
 Exec=$EXEC
 Icon=$ICON
 Terminal=$IN_TERMINAL
-Categories=System;
-EOF
-    chmod 755 "$FILE"
-    # GNOME only starts desktop launchers that are marked trusted
-    if command -v gio >/dev/null 2>&1; then gio set "$FILE" metadata::trusted true 2>/dev/null || true; fi
-    if [ -n "$DESK_USER" ]; then chown "$DESK_USER" "$DIR" "$FILE" 2>/dev/null || true; fi
-    say "Added 'Install $DISTRO_NAME' to $DIR"
+Categories=System;"
+
+    # The shortcut goes on the Desktop of the user who started build.sh and, when build.sh runs as
+    # plain root (su), of every normal user: the live session logs in as one of them, not as root.
+    # It also goes into the applications menu and /etc/skel, so it is there for any user of the clone.
+    HOMES=""
+    if [ -n "$DESK_USER" ] || [ "$(id -u)" -ne 0 ]; then
+        HOMES="$DESK_HOME"
+    else
+        HOMES=$(awk -F: '$3 >= 1000 && $3 < 60000 && $6 != "" && $7 !~ /(nologin|false)$/ { print $6 }' /etc/passwd)
+        [ -n "$HOMES" ] || HOMES="$DESK_HOME"
+    fi
+    for H in $HOMES /etc/skel; do
+        [ -d "$H" ] || continue
+        DIR=""
+        if [ "$H" != /etc/skel ] && command -v xdg-user-dir >/dev/null 2>&1; then DIR=$(HOME="$H" xdg-user-dir DESKTOP 2>/dev/null || true); fi
+        if [ -z "$DIR" ] || [ "$DIR" = "$H" ]; then DIR="$H/Desktop"; fi
+        OWNER=$(stat -c %U "$H" 2>/dev/null || true)
+        as_root mkdir -p "$DIR"
+        FILE="$DIR/claudebackup-install.desktop"
+        printf '%s\n' "$ENTRY" | as_root tee "$FILE" >/dev/null
+        as_root chmod 755 "$FILE"
+        # GNOME only starts desktop launchers that are marked trusted
+        if command -v gio >/dev/null 2>&1; then gio set "$FILE" metadata::trusted true 2>/dev/null || true; fi
+        if [ -n "$OWNER" ] && [ "$H" != /etc/skel ]; then as_root chown "$OWNER" "$DIR" "$FILE" 2>/dev/null || true; fi
+        say "Added 'Install $DISTRO_NAME' to $DIR"
+    done
+    printf '%s\n' "$ENTRY" | as_root tee /usr/share/applications/claudebackup-install.desktop >/dev/null
+    as_root chmod 644 /usr/share/applications/claudebackup-install.desktop
 }
 
 # The app reads its settings from ~/.config/claudebackup-linux/configuration.txt: start its
