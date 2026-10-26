@@ -16,8 +16,11 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 SRC_DIR="$(dirname "$SELF")"
 TARGET="claudebackup-linux"
 
-say() { printf '\033[1;31m==>\033[0m %s\n' "$*"; }
+# Messages and the output of the commands after them are green (like the app); "==>" stays red,
+# errors are red. say() leaves the terminal green, so the commands' output that follows is green too.
+say() { printf '\033[1;31m==>\033[0;32m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+printf '\033[32m'
 
 # Single-quote one argument for a shell command line (for su -c)
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -536,7 +539,7 @@ say "Detected $DISTRO_NAME"
 # yes/no question; $2 is the default (y/n); no terminal = the default
 ask() {
     if [ ! -t 0 ]; then [ "$2" = y ]; return; fi
-    printf '\033[1;32m%s\033[0m ' "$1"
+    printf '\033[1;32m%s\033[0;32m ' "$1"
     read -r reply
     reply=$(printf '%s' "${reply:-$2}" | tr '[:upper:]' '[:lower:]')
     [ "$reply" = y ] || [ "$reply" = yes ]
@@ -544,7 +547,7 @@ ask() {
 # choice of 1/2; prints 1 or 2 (default 1)
 choose() {
     if [ ! -t 0 ]; then echo 1; return; fi
-    printf '\033[1;32m%s\033[0m ' "$1" >&2
+    printf '\033[1;32m%s\033[0;32m ' "$1" >&2
     read -r reply
     [ "$reply" = 2 ] && echo 2 || echo 1
 }
@@ -663,4 +666,5 @@ command -v "$TARGET" >/dev/null 2>&1 || die "$TARGET is not on PATH after instal
 if [ "$CALAMARES" = 1 ] || [ "$ALPINE_TOOLS" = 1 ]; then add_desktop_shortcut; fi
 
 say "Launching $TARGET"
+printf '\033[0m'
 exec "$TARGET"
