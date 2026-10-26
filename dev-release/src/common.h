@@ -55,8 +55,10 @@ inline void logToFile(const std::string& tag, const std::string& msg) {
     if (f.is_open()) f << "[" << tag << "] " << msg << "\n";
 }
 
-inline void logNormal(const std::string& msg)  { std::cout << COLOR_CYAN   << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("INFO", msg); }
-inline void logSuccess(const std::string& msg) { std::cout << COLOR_GREEN  << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("OK", msg); }
+// Steps ("[cbl] Mounting system to ...") are green like the commands' output; warnings and errors keep
+// their own colour so they stand out
+inline void logNormal(const std::string& msg)  { std::cout << COLOR_GREEN  << "[cbl] " << msg << COLOR_RESET << std::endl; logToFile("INFO", msg); }
+inline void logSuccess(const std::string& msg) { std::cout << COLOR_GREEN  << "[cbl] " << msg << COLOR_RESET << std::endl; logToFile("OK", msg); }
 inline void logWarning(const std::string& msg) { std::cout << COLOR_YELLOW << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("WARN", msg); }
 inline void logError(const std::string& msg)   { std::cerr << COLOR_RED    << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("ERROR", msg); }
 [[noreturn]] inline void fatal(const std::string& msg) { logError(msg); std::exit(1); }

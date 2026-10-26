@@ -307,7 +307,13 @@ inline std::string generateExcludeList(const Context& c) {
 
     for (const auto& s : swapFilesFromFstab()) ex.push_back(s);
 
-    if (c.cleanCache) for (const auto& p : packageCaches(c.distro)) ex.push_back(p.rule);
+    if (c.cleanCache) {
+        for (const auto& p : packageCaches(c.distro)) ex.push_back(p.rule);
+        // per-user caches (browser caches etc.): only regenerable data, and files like Firefox's
+        // cache2/index change while the browser runs, which makes mkfs.erofs 1.7.x abort (Error 25)
+        ex.push_back("home/*/.cache/*");
+        ex.push_back("root/.cache/*");
+    }
 
     if (c.isGitHubAction) { ex.push_back("usr"); ex.push_back("var"); ex.push_back("opt"); }
     for (const auto& l : splitLines(readFile(CONFIG_DIR + "/custom.exclude.list"))) {
@@ -464,7 +470,8 @@ inline std::string humanSize(const std::string& path) {
     return o.str();
 }
 
-inline void drawErofsBar(int percentage, int spinnerPos, int spinnerChar, int secs, const std::string& size) {
+// The spinner is the bar's head: it turns on the last filled cell and moves right as the bar grows
+inline void drawErofsBar(int percentage, int spinnerChar, int secs, const std::string& size) {
     struct winsize w;
     int width = (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) ? w.ws_col : 80;
     char timer[16];
@@ -477,7 +484,7 @@ inline void drawErofsBar(int percentage, int spinnerPos, int spinnerChar, int se
     const char spinner[] = {'|', '/', '-', '\\'};
 
     std::string bar;
-    for (int i = 0; i < filled; i++) bar += (i == spinnerPos % filled && percentage < 100) ? spinner[spinnerChar % 4] : '=';
+    for (int i = 0; i < filled; i++) bar += (i == filled - 1 && percentage < 100) ? spinner[spinnerChar % 4] : '=';
     bar += std::string(barWidth - filled, ' ');
     char pct[8];
     snprintf(pct, sizeof(pct), "%3d%%", percentage);
@@ -491,17 +498,17 @@ inline int runWithErofsBar(const std::string& cmd, const std::string& output, co
 
     std::cout << "\033[?25l";   // hide the cursor while drawing
     auto start = std::chrono::steady_clock::now();
-    int spinnerPos = 0, spinnerChar = 0, frame = 0;
+    int spinnerChar = 0, frame = 0;
     while (!done) {
         int secs = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count());
         int pct = std::min(60, std::max(1, secs / 10));
-        if (++frame >= 3) { frame = 0; spinnerPos++; spinnerChar++; }
-        drawErofsBar(pct, spinnerPos, spinnerChar, secs, humanSize(output));
+        if (++frame >= 3) { frame = 0; spinnerChar++; }
+        drawErofsBar(pct, spinnerChar, secs, humanSize(output));
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     worker.join();
     int secs = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count());
-    drawErofsBar(rc == 0 ? 100 : std::min(60, std::max(1, secs / 10)), 0, 0, secs, humanSize(output));
+    drawErofsBar(rc == 0 ? 100 : std::min(60, std::max(1, secs / 10)), 0, secs, humanSize(output));
     std::cout << "\033[?25h" << std::endl;
     if (rc != 0) runCommand("tail -n 20 " + shq(logFile));
     return rc;
