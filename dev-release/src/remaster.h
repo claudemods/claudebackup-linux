@@ -60,7 +60,7 @@ inline Context makeContext(const RemasterOptions& o) {
     while (snapshotDir.size() > 1 && snapshotDir.back() == '/') snapshotDir.pop_back();
 
     std::string name = o.isoName;
-    if (name.empty()) name = makeIsoName(c.distro, "");
+    if (name.empty()) name = makeIsoName(c.distro);
     else if (!endsWith(name, ".iso")) name += ".iso";
 
     // The ISO structure lives in the user's config folder like in the claudemods multi iso creator;
@@ -83,18 +83,11 @@ inline std::vector<std::string> missingTools(const Distro& d) {
     return missing;
 }
 
-inline std::string installToolsCommand(const Distro& d) {
-    if (d.family == "debian")   return "apt-get install -y squashfs-tools xorriso mtools dosfstools curl live-boot live-boot-initramfs-tools";
-    if (d.family == "archlinux") return "pacman -S --needed --noconfirm squashfs-tools erofs-utils libisoburn mtools dosfstools unzip mkinitcpio device-mapper gnupg";
-    if (d.family == "fedora")   return "dnf install -y squashfs-tools xorriso mtools dosfstools curl dracut-live";
-    if (d.family == "opensuse") return "zypper install -y squashfs xorriso mtools dosfstools curl";
-    if (d.family == "alpine")   return "apk add squashfs-tools xorriso mtools dosfstools curl";
-    if (d.family == "gentoo")   return "emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools net-misc/curl sys-kernel/dracut sys-fs/lvm2";
-    return "";
-}
+// Everything the app needs is installed by dev-release/build.sh (tools, Calamares, Alpine
+// installer tools); the app itself installs nothing
+const std::string INSTALL_HINT = "run dev-release/build.sh";
 
-// erofs-utils (mkfs.erofs) per family. Not part of installToolsCommand: older releases do not package
-// it, and one missing package would fail the whole install.
+// erofs-utils (mkfs.erofs) per family, for messages
 inline std::string erofsPackage(const Distro& d) {
     return d.family == "gentoo" ? "sys-fs/erofs-utils" : "erofs-utils";
 }
@@ -102,11 +95,6 @@ inline std::string erofsPackage(const Distro& d) {
 // Squashfs compression per distro: Gentoo's squashfs-tools is built with gzip by default, every
 // other distro uses zstd (its level is set in Setup)
 inline std::string compressionFor(const Distro& d) { return d.family == "gentoo" ? "gzip" : "zstd"; }
-
-// Gentoo: make sure emerge can work (repository present, make.profile a real profile link)
-inline bool prepareGentooPortage() {
-    return native::runShell(scripts::GENTOO_PORTAGE_PREP, "") == 0;
-}
 
 // Boot files for the build: the embedded claudemods zip on Arch, downloaded bootloaders otherwise
 inline bool bootFilesReady(const Distro& d) {
@@ -141,14 +129,8 @@ inline bool ensureMkinitcpioConfig() {
 // Calamares does not run on Alpine, so it is never offered or installed there
 inline bool calamaresAvailable(const Distro& d) { return d.supported() && d.family != "alpine"; }
 
-// Alpine instead gets our own installer that puts the cloned system back on a disk. These are
-// the tools it needs inside the clone, so they are installed on the host before building.
-inline std::string alpineInstallerToolsCommand(const Distro& d) {
-    std::string pkgs = "sfdisk e2fsprogs btrfs-progs dosfstools squashfs-tools grub efibootmgr";
-    if (d.arch == "x86_64") pkgs += " grub-bios grub-efi";
-    return "apk add " + pkgs;
-}
-
+// Alpine instead gets our own installer that puts the cloned system back on a disk. Its tools
+// (installed by build.sh) must be on the host before building, so they are in the clone.
 inline bool alpineInstallerReady() {
     for (const char* t : {"sfdisk", "mkfs.vfat", "grub-install", "grub-mkconfig", "mkinitfs"})
         if (!commandExists(t)) return false;
@@ -159,57 +141,6 @@ inline bool alpineInstallerReady() {
 inline bool installClonedSystemAlpine(const std::string& disk, const std::string& fs, bool compress) {
     if (geteuid() != 0) { logError("Installing needs root."); return false; }
     return native::runShell(scripts::render(scripts::ALPINE_INSTALLER), "", {disk, fs, compress ? "1" : "0"}) == 0;
-}
-
-// Where each family's live initramfs leaves the squashfs during the live session (Calamares unpackfs)
-inline std::string calamaresUnpackSource(const Distro& d) {
-    if (d.family == "debian") return "/run/live/medium/live/filesystem.squashfs";                // live-boot
-    if (d.family == "fedora" || d.family == "opensuse" || d.family == "gentoo")
-        return "/run/initramfs/live/LiveOS/squashfs.img";                                       // dracut dmsquash-live
-    return "";
-}
-
-// Installs one package with the family's package manager
-inline std::string packageInstallCommand(const Distro& d, const std::string& pkg) {
-    if (d.family == "debian")   return "apt-get install -y " + pkg;
-    if (d.family == "fedora")   return "dnf install -y " + pkg;
-    if (d.family == "opensuse") return "zypper --non-interactive install " + pkg;
-    if (d.family == "alpine")   return "apk add " + pkg;
-    if (d.family == "gentoo")   return "emerge --noreplace --ask=n " + pkg;
-    return "pacman -S --needed --noconfirm " + pkg;
-}
-
-// Makes sure a command exists, installing its package if it does not
-inline bool ensureCommand(const Distro& d, const std::string& cmd, const std::string& pkg) {
-    if (commandExists(cmd)) return true;
-    logNormal("Installing " + pkg + "...");
-    runCommand(packageInstallCommand(d, pkg));
-    if (commandExists(cmd)) return true;
-    logError(cmd + " is not installed and '" + packageInstallCommand(d, pkg) + "' did not install it.");
-    return false;
-}
-
-// Installs Calamares on the host so the next ISO contains it.
-//   Arch: the embedded calamares-files.zip + claudemods.zip (cmiadvanced extrainstalls.sh)
-//   others: the distro's calamares package + claudemods branding and a full-clone config
-inline bool installCalamares(const Distro& d, bool btrfs, bool erofs) {
-    if (!d.supported()) { logError("Calamares setup needs a supported distro."); return false; }
-    if (!calamaresAvailable(d)) { logError("Calamares does not run on Alpine."); return false; }
-    if (d.family == "gentoo" && !prepareGentooPortage()) { logError("Portage is not usable, cannot emerge Calamares."); return false; }
-    // The embedded zips need unzip
-    if (!ensureCommand(d, "unzip", d.family == "gentoo" ? "app-arch/unzip" : "unzip")) return false;
-
-    const std::string dir = STAGING_DIR + "/calamares";
-    runCommand("rm -rf " + shq(dir));
-    bool ok = resources::extract(resources::Zip::CalamaresFiles, dir) &&
-              resources::extract(resources::Zip::Claudemods, dir + "/calamares-files");
-    if (ok && d.family == "archlinux")
-        ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP), "", {dir, btrfs ? "1" : "0", erofs ? "1" : "0"}) == 0;
-    else if (ok)
-        ok = native::runShell(scripts::render(scripts::CALAMARES_SETUP_GENERIC), "",
-                              {d.family, dir, btrfs ? "1" : "0", calamaresUnpackSource(d), toLower(d.distroID), erofs ? "erofs" : "squashfs"}) == 0;
-    runCommand("rm -rf " + shq(dir));
-    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,12 +215,12 @@ inline bool run(const RemasterOptions& opts) {
     if (!missing.empty()) {
         std::string list;
         for (const auto& m : missing) list += m + " ";
-        logError("Missing tools: " + list + "(use Setup > Install Needed Tools)");
+        logError("Missing tools: " + list + "(" + INSTALL_HINT + ")");
         return false;
     }
 
     if (c.settings.imageFormat == "erofs") {
-        if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is missing (Setup > Install Needed Tools, or install " + erofsPackage(c.distro) + ")"); return false; }
+        if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is missing (" + INSTALL_HINT + ", or install " + erofsPackage(c.distro) + ")"); return false; }
         if (!native::kernelHasErofs()) {
             logError("The running kernel has no erofs support (CONFIG_EROFS_FS), so the live ISO could not mount the image. Set Setup > Image Format to squashfs.");
             return false;

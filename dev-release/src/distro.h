@@ -91,19 +91,13 @@ inline Distro detectDistro() {
     return d;
 }
 
-// "claudemods-<distro>-<codename>-<host>-<arch>-<timestamp>.iso"
-inline std::string makeIsoName(const Distro& d, const std::string& prefix) {
-    char host[256] = "unknown";
-    gethostname(host, sizeof(host) - 1);
+// Default ISO name: "claudebackup-<distro>-<YYYY-MM-DD_HHMM>.iso", e.g. claudebackup-gentoo-2026-10-26_1430.iso
+inline std::string makeIsoName(const Distro& d) {
     char ts[64];
     time_t now = time(nullptr);
     strftime(ts, sizeof(ts), "%Y-%m-%d_%H%M", localtime(&now));
-
-    std::string name = prefix.empty() ? "claudemods-" + toLower(d.distroID) : prefix;
-    if (prefix.empty() && !d.codename.empty()) name += "-" + toLower(d.codename);
-    if (prefix.empty()) name += "-" + toLower(host);
-    name += "-" + d.arch + "-" + ts + ".iso";
-    return replaceAll(name, " ", "-");
+    std::string distro = d.distroID.empty() ? "linux" : toLower(d.distroID);
+    return replaceAll("claudebackup-" + distro + "-" + ts + ".iso", " ", "-");
 }
 
 #endif

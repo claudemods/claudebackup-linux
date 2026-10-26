@@ -350,12 +350,12 @@ std::string guideText() {
     auto step = [&](const std::string& text) { g += std::to_string(++n) + ". " + text + "\n"; };
     const std::string pad = "                                     ";
 
-    if (arch)        step("Setup > Install Needed Tools      squashfs-tools, erofs-utils, libisoburn, mtools, unzip, mkinitcpio");
-    else if (gentoo) step("Setup > Install Needed Tools      emerge squashfs-tools, libisoburn, mtools, curl, dracut, lvm2\n" +
-                          pad + "(fetches the gentoo repo / fixes the profile if needed)");
-    else if (f == "debian") step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, curl, live-boot");
-    else if (f == "fedora") step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, curl, dracut-live");
-    else             step("Setup > Install Needed Tools      squashfs-tools, xorriso, mtools, dosfstools, curl");
+    // Installing is done once by dev-release/build.sh, before the app runs
+    if (alpine) step("dev-release/build.sh              tools for this distro + the Alpine installer tools (the live\n" +
+                     pad + "ISO's 'Install Cloned System To Disk'), then builds and starts the app");
+    else        step("dev-release/build.sh              tools for this distro + Calamares (ext4 or btrfs zstd:22,\n" +
+                     pad + "squashfs or erofs), then builds and starts the app" +
+                     (gentoo ? "\n" + pad + "(fetches the gentoo repo / fixes the profile if needed)" : std::string()));
     if (!arch) step("Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files");
     else       step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
     step("Setup > ISO Name / Work / Output / Clone Directory   (blank ISO name = auto)");
@@ -365,10 +365,6 @@ std::string guideText() {
          pad + "zstd on kernel 6.10+, lz4hc on older ones)");
     step("Setup > Edit Configs              optional: your own GRUB config, boot text and initramfs config");
     step(std::string("Setup > RAM Mode                  adds a ") + (arch ? "copytoram=y" : "toram") + " boot entry");
-    if (alpine) step("Setup > Alpine Installer Tools    tools the live ISO needs to install the clone to disk\n" +
-                     pad + "(do this BEFORE building, so the ISO contains them)");
-    else        step("Setup > Install Calamares         ext4 or btrfs zstd:22, claudemods branding\n" +
-                     pad + "(do this BEFORE building, so the ISO contains it)");
     step("Detected System And Build Steps   check it says 'Support: yes'");
     step("Create Bootable ISO               everything is unmounted at the end, even on Ctrl+C");
     if (alpine) step("Install Cloned System To Disk     (in the live ISO) your clone back on a disk, not a\n" +
@@ -484,25 +480,6 @@ struct SetupItem {
     std::function<void()> run;
 };
 
-void setupInstallTools() {
-    const Distro& d = sysDistro();
-    std::string cmd = remaster::installToolsCommand(d);
-    if (cmd.empty()) std::cout << COLOR_RED << "Unsupported distro." << COLOR_RESET << std::endl;
-    else if (d.family == "gentoo" && !remaster::prepareGentooPortage())
-        logError("Portage is not usable yet (see above), so nothing was emerged.");
-    else {
-        std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
-        runCommand(cmd);
-        // erofs images need mkfs.erofs; Arch has it in the main list, elsewhere it is optional
-        if (d.family != "archlinux" && !commandExists("mkfs.erofs")) {
-            std::string e = remaster::packageInstallCommand(d, remaster::erofsPackage(d));
-            std::cout << COLOR_CYAN << "Running: " << e << COLOR_RESET << std::endl;
-            if (runCommand(e) != 0) logWarning("erofs-utils is not available here - only the squashfs image format will work.");
-        }
-    }
-    pressAnyKey();
-}
-
 void setupCloneDir() {
     // cmiadvanced setCloneDir: parent folder + /clone_system_temp
     std::string def = userHome();
@@ -547,39 +524,14 @@ void setupImageFormat() {
             return;
         }
         if (!commandExists("mkfs.erofs"))
-            std::cout << COLOR_YELLOW << "mkfs.erofs is not installed yet - run Setup > Install Needed Tools." << COLOR_RESET << std::endl;
+            std::cout << COLOR_YELLOW << "mkfs.erofs is not installed yet - run dev-release/build.sh (or install "
+                      << remaster::erofsPackage(sysDistro()) << ")." << COLOR_RESET << std::endl;
         mcfg.imageFormat = "erofs";
         saveConfig();
     } else if (f == "1") {
         mcfg.imageFormat = "squashfs";
         saveConfig();
     }
-}
-
-void setupAlpineInstallerTools() {
-    // Calamares does not run on Alpine: install what our own installer needs
-    std::string cmd = remaster::alpineInstallerToolsCommand(sysDistro());
-    std::cout << COLOR_CYAN << "Running: " << cmd << COLOR_RESET << std::endl;
-    if (runCommand(cmd) == 0) logSuccess("Installer tools ready - build the ISO now so they are in the clone.");
-    else logError("Installing the installer tools failed.");
-    pressAnyKey();
-}
-
-void setupCalamares() {
-    const Distro& d = sysDistro();
-    std::cout << COLOR_GREEN << "Choose Calamares configuration for system install:\n"
-              << "1) Default configuration (Ext4)\n"
-              << "2) Custom configuration with btrfs level 22 compression" << COLOR_RESET << std::endl;
-    bool btrfs = getUserInput("Enter your choice (1 or 2): ") == "2";
-    std::cout << COLOR_GREEN << "Choose Cloned System Image type:\n"
-              << "1) Default Cloned Squashfs System\n"
-              << "2) Erofs Cloned System Image\n"
-              << "(should match Setup > Image Format, currently " << mcfg.imageFormat << ")" << COLOR_RESET << std::endl;
-    std::string img = getUserInput("Enter your choice (1 or 2, blank = match Image Format): ");
-    bool erofs = img.empty() ? mcfg.imageFormat == "erofs" : img == "2";
-    if (remaster::installCalamares(d, btrfs, erofs)) logSuccess("Calamares installation and configuration completed!");
-    else logError("Calamares setup failed.");
-    pressAnyKey();
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +565,7 @@ void editCustomFile(const remaster::CustomFile& f) {
 // A file of the installed Calamares (edited in place: it is part of the system the ISO clones)
 void editSystemFile(const std::string& label, const std::string& path) {
     if (!isRegularFile(path)) {
-        std::cout << COLOR_RED << path << " not found - run Setup > Install Calamares first." << COLOR_RESET << std::endl;
+        std::cout << COLOR_RED << path << " not found - install Calamares with dev-release/build.sh first." << COLOR_RESET << std::endl;
         pressAnyKey();
         return;
     }
@@ -674,9 +626,8 @@ void showEditMenu() {
 // The Setup items for the running distro only (no Arch items on Gentoo, and so on), in the order of
 // the claudemods multi iso creator: tools, then where things go (clone, tag, name, output), then the rest
 std::vector<SetupItem> setupItems() {
-    const bool arch = onFamily("archlinux"), gentoo = onFamily("gentoo"), alpine = onFamily("alpine");
-    std::vector<SetupItem> items;
-    items.push_back({"Install Needed Tools", setupInstallTools});
+    const bool arch = onFamily("archlinux"), gentoo = onFamily("gentoo");
+    std::vector<SetupItem> items;   // tools, Calamares and the Alpine installer tools come from build.sh
     if (!arch) items.push_back({"Download Bootloaders", [] {
         if (native::ensureBootloaders()) logSuccess("Bootloaders ready.");
         else logError("Bootloader download failed.");
@@ -703,8 +654,6 @@ std::vector<SetupItem> setupItems() {
         std::cout << COLOR_GREEN << "Package cache cleaning is now " << (mcfg.cleanCache ? "ON" : "OFF") << COLOR_RESET << std::endl;
         pressAnyKey();
     }});
-    if (alpine) items.push_back({"Alpine Installer Tools (to install the clone back to disk)", setupAlpineInstallerTools});
-    else if (sysDistro().supported()) items.push_back({"Install Calamares (ext4 / btrfs zstd:22)", setupCalamares});
     if (sysDistro().supported()) items.push_back({"Edit Configs (GRUB, boot text, initramfs, Calamares)", showEditMenu});
     return items;
 }
@@ -732,8 +681,8 @@ void installClonedSystem() {
               << "Puts this cloned system (users, settings, /home) onto a disk - not a fresh Alpine install.\n"
               << "Run it from the live ISO." << COLOR_RESET << "\n\n";
     if (!remaster::alpineInstallerReady()) {
-        std::cerr << COLOR_RED << "The installer tools are missing. On the original system run Setup > Alpine Installer Tools,\n"
-                  << "then build the ISO again." << COLOR_RESET << std::endl;
+        std::cerr << COLOR_RED << "The installer tools are missing. On the original system run dev-release/build.sh\n"
+                  << "(answer yes to the Alpine installer tools), then build the ISO again." << COLOR_RESET << std::endl;
         pressAnyKey();
         return;
     }

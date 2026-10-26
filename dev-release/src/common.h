@@ -19,11 +19,11 @@ const std::string APP_VERSION = "v1.0";
 const std::string APP_BIN     = "claudebackup-linux";
 
 // Filesystem label of the live medium (referenced by boot params, menus and xorriso)
-const std::string LIVE_LABEL = "CDB_LIVE";
+const std::string LIVE_LABEL = "CBL_LIVE";
 
 // Paths
 const std::string CONFIG_DIR  = "/etc/claudebackup-linux";
-const std::string STAGING_DIR = "/tmp/cdb";
+const std::string STAGING_DIR = "/tmp/cbl";
 const std::string DEFAULT_WORK_DIR = "/home/claudebackup";
 const std::string LOG_FILE    = "/var/log/claudebackup-linux.log";
 const std::string BOOTLOADER_URL =
@@ -45,10 +45,10 @@ inline void logToFile(const std::string& tag, const std::string& msg) {
     if (f.is_open()) f << "[" << tag << "] " << msg << "\n";
 }
 
-inline void logNormal(const std::string& msg)  { std::cout << COLOR_CYAN   << "[cdb] " << COLOR_RESET << msg << std::endl; logToFile("INFO", msg); }
-inline void logSuccess(const std::string& msg) { std::cout << COLOR_GREEN  << "[cdb] " << COLOR_RESET << msg << std::endl; logToFile("OK", msg); }
-inline void logWarning(const std::string& msg) { std::cout << COLOR_YELLOW << "[cdb] " << COLOR_RESET << msg << std::endl; logToFile("WARN", msg); }
-inline void logError(const std::string& msg)   { std::cerr << COLOR_RED    << "[cdb] " << COLOR_RESET << msg << std::endl; logToFile("ERROR", msg); }
+inline void logNormal(const std::string& msg)  { std::cout << COLOR_CYAN   << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("INFO", msg); }
+inline void logSuccess(const std::string& msg) { std::cout << COLOR_GREEN  << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("OK", msg); }
+inline void logWarning(const std::string& msg) { std::cout << COLOR_YELLOW << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("WARN", msg); }
+inline void logError(const std::string& msg)   { std::cerr << COLOR_RED    << "[cbl] " << COLOR_RESET << msg << std::endl; logToFile("ERROR", msg); }
 [[noreturn]] inline void fatal(const std::string& msg) { logError(msg); std::exit(1); }
 
 // ---------------------------------------------------------------------------

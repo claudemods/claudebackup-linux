@@ -7,7 +7,7 @@
 // They are written to STAGING_DIR/scripts at run time, so no files need installing.
 namespace scripts {
 
-inline const char* BOOTLOADER_COPY = R"CDB(#!/bin/bash
+inline const char* BOOTLOADER_COPY = R"CBL(#!/bin/bash
 set -e
 
 BOOTLOADER_SRC="$1"
@@ -58,9 +58,9 @@ for pair in "arm64-efi:grubaa64.efi:BOOTAA64.EFI" "riscv64-efi:grubriscv64.efi:B
 done
 
 echo "Bootloader preparation complete."
-)CDB";
+)CBL";
 
-inline const char* GENERATE_MENUS = R"CDB(#!/bin/bash
+inline const char* GENERATE_MENUS = R"CBL(#!/bin/bash
 set -e
 
 ISODIR="$1"
@@ -232,323 +232,17 @@ configfile \$prefix/grub.cfg
 EOF
 
 echo "Menus generated."
-)CDB";
-
-// Arch: Calamares from the claudemods zips (port of cmiadvanced extrainstalls.sh).
-// $1 = extracted calamares-files parent dir, $2 = 1 for btrfs zstd:22 mount options,
-// $3 = 1 when the ISO image is erofs (unpackfs sourcefs: erofs)
-inline const char* CALAMARES_SETUP = R"CDB(#!/bin/bash
-set -e
-
-SRC="$1/calamares-files"
-BTRFS="${2:-0}"
-EROFS="${3:-0}"
-cd "$SRC"
-
-echo "-> Installing Calamares packages..."
-pacman -U --noconfirm --overwrite="*" calamares-*.pkg.tar* ckbcomp-*.pkg.tar*
-
-echo "-> Copying Calamares configuration..."
-cp -r calamares /etc/
-
-echo "-> Copying claudemods branding..."
-mkdir -p /usr/share/calamares/branding
-cp -r claudemods /usr/share/calamares/branding/
-
-echo "-> Extracting extra files..."
-unzip -o -q extras.zip -d /
-
-if [ "$BTRFS" = "1" ]; then
-    echo "-> Applying btrfs level 22 compression (compress=zstd:22)..."
-    cp -f mount.conf /usr/share/calamares/modules/
-else
-    echo "-> Using the default mount configuration (ext4 / plain btrfs)."
-fi
-
-if [ "$EROFS" = "1" ]; then
-    echo "-> Applying Erofs Cloned System Image configuration..."
-    cp -r erofs/* /
-else
-    echo "-> Using Default Cloned Squashfs System."
-fi
-
-rm -f /usr/share/applications/calamares.desktop
-cp -f calamares.desktop /usr/share/applications/
-rm -rf /usr/share/calamares/branding/manjaro
-
-# initcpio preset = the running kernel's package (linux-cachyos, linux, linux-zen, ...)
-PKGBASE=$(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null || echo linux-cachyos)
-for f in /etc/calamares/modules/initcpio.conf /usr/share/calamares/modules/initcpio.conf; do
-    if [ -f "$f" ]; then sed -i "s/^kernel:.*/kernel: $PKGBASE/" "$f"; fi
-done
-
-echo "-> Calamares installed (kernel preset: $PKGBASE). It installs from /run/arch/bootmnt/LiveOS/rootfs.img."
-)CDB";
-
-// Debian, Fedora, openSUSE, Gentoo (Calamares does not run on Alpine): the distro's own
-// Calamares package, configured for a full-system clone
-// (no users page - the clone keeps its users) with the claudemods branding, unpacking the live
-// squashfs. Runs on the host, so the next ISO contains it.
-// $1 family, $2 extracted zips dir, $3 = 1 for btrfs zstd:22, $4 squashfs path in the live
-// session, $5 os-release ID (EFI boot entry name), $6 image type (squashfs | erofs)
-inline const char* CALAMARES_SETUP_GENERIC = R"CDB(#!/bin/bash
-set -e
-
-FAMILY="$1"
-SRC="$2/calamares-files"
-BTRFS="${3:-0}"
-UNPACK="$4"
-DISTRO_ID="${5:-linux}"
-SOURCEFS="${6:-squashfs}"
-ARCH=$(uname -m)
-
-pkg_install() {
-    if ! "$@"; then
-        echo "[FATAL ERROR] package install failed: $*"
-        echo "              Calamares may not be packaged for this release - enable the repository"
-        echo "              that has it (e.g. Ubuntu universe) and try again."
-        exit 1
-    fi
-}
-
-echo "-> Installing Calamares, GRUB and rsync for $FAMILY..."
-case "$FAMILY" in
-    debian)
-        PKGS="calamares rsync efibootmgr dosfstools"
-        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub-pc-bin grub-efi-amd64-bin"
-        apt-get update || true
-        pkg_install apt-get install -y $PKGS
-        GRUB=grub; INITRAMFS=initramfs ;;
-    fedora)
-        PKGS="calamares rsync efibootmgr dosfstools"
-        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-pc-modules grub2-efi-x64-modules"
-        pkg_install dnf install -y $PKGS
-        GRUB=grub2; INITRAMFS=dracut ;;
-    opensuse)
-        PKGS="calamares rsync efibootmgr dosfstools"
-        [ "$ARCH" = "x86_64" ] && PKGS="$PKGS grub2-i386-pc grub2-x86_64-efi"
-        pkg_install zypper --non-interactive install $PKGS
-        GRUB=grub2; INITRAMFS=dracut ;;
-    gentoo)
-        # app-admin/calamares is in ::gentoo but can be keyworded testing-only (~arch); accept it
-        # for this one package if the plain emerge is refused. It builds Qt 6 / KF 6: be patient.
-        PKGS="app-admin/calamares net-misc/rsync sys-boot/grub sys-boot/efibootmgr sys-fs/dosfstools"
-        if ! emerge --noreplace --ask=n $PKGS; then
-            KW="~$(portageq envvar ARCH 2>/dev/null || echo amd64)"
-            echo "-> Accepting $KW for app-admin/calamares and retrying..."
-            mkdir -p /etc/portage/package.accept_keywords
-            echo "app-admin/calamares $KW" > /etc/portage/package.accept_keywords/claudebackup-calamares
-            pkg_install emerge --noreplace --ask=n --autounmask=y --autounmask-continue=y $PKGS
-        fi
-        GRUB=grub; INITRAMFS=dracut ;;
-    *)
-        echo "[FATAL ERROR] no Calamares setup for family '$FAMILY'."
-        exit 1 ;;
-esac
-if ! command -v calamares >/dev/null 2>&1; then
-    echo "[FATAL ERROR] calamares was not installed."
-    exit 1
-fi
-
-CFG=/etc/calamares
-MOD=$CFG/modules
-if [ -d "$CFG" ] && [ ! -d "$CFG.orig" ]; then
-    echo "-> Keeping the distro's Calamares config in $CFG.orig"
-    mv "$CFG" "$CFG.orig"
-fi
-rm -rf "$CFG"
-mkdir -p "$MOD" "$CFG/scripts"
-
-echo "-> Copying claudemods branding..."
-mkdir -p /usr/share/calamares/branding
-rm -rf /usr/share/calamares/branding/claudemods
-cp -r "$SRC/claudemods" /usr/share/calamares/branding/
-
-SYSTEMD=0
-[ -d /run/systemd/system ] && SYSTEMD=1
-
-# --- settings.conf ---------------------------------------------------------
-# Plain sh word list (runs under /bin/sh when bash is not installed)
-EXEC="partition mount unpackfs"
-[ "$SYSTEMD" = 1 ] && EXEC="$EXEC machineid"
-EXEC="$EXEC fstab locale keyboard localecfg shellprocess@cdbkernel $INITRAMFS grubcfg bootloader umount"
-{
-    echo "---"
-    echo "modules-search: [ local ]"
-    echo "instances:"
-    echo "- id: cdbkernel"
-    echo "  module: shellprocess"
-    echo "  config: shellprocess_cdbkernel.conf"
-    echo "sequence:"
-    echo "- show:"
-    for m in welcome locale keyboard partition summary; do echo "  - $m"; done
-    echo "- exec:"
-    for m in $EXEC; do echo "  - $m"; done
-    echo "- show:"
-    echo "  - finished"
-    echo "branding: claudemods"
-    echo "prompt-install: true"
-    echo "dont-chroot: false"
-    echo "oem-setup: false"
-    echo "disable-cancel: false"
-    echo "disable-cancel-during-exec: true"
-    echo "quit-at-end: false"
-} > "$CFG/settings.conf"
-
-# --- module configs ---------------------------------------------------------
-FSTYPE=ext4
-[ "$BTRFS" = 1 ] && FSTYPE=btrfs
-
-cat > "$MOD/unpackfs.conf" << EOF
----
-unpack:
-    - source: "$UNPACK"
-      sourcefs: "$SOURCEFS"
-      destination: ""
-EOF
-
-cat > "$MOD/partition.conf" << EOF
----
-efiSystemPartition: "/boot/efi"
-userSwapChoices:
-    - none
-    - small
-    - file
-initialPartitioningChoice: erase
-initialSwapChoice: none
-defaultFileSystemType: "$FSTYPE"
-availableFileSystemTypes: ["ext4","btrfs","xfs"]
-EOF
-
-# Same mount.conf as Arch (btrfs subvolumes); compress=zstd:22 only when btrfs was chosen
-cp -f "$SRC/mount.conf" "$MOD/mount.conf"
-if [ "$BTRFS" != 1 ]; then
-    sed -i 's/, compress=zstd:22//' "$MOD/mount.conf"
-fi
-
-# Calamares 3.2 reads mount options from fstab.conf (3.3 ignores these keys)
-BTRFS_OPTS="defaults,noatime"
-[ "$BTRFS" = 1 ] && BTRFS_OPTS="defaults,noatime,compress=zstd:22"
-cat > "$MOD/fstab.conf" << EOF
----
-mountOptions:
-    default: defaults,noatime
-    btrfs: $BTRFS_OPTS
-ssdExtraMountOptions:
-    ext4: discard
-    btrfs: discard
-crypttabOptions: luks
-EOF
-
-cat > "$MOD/bootloader.conf" << EOF
----
-efiBootLoader: "grub"
-timeout: "10"
-grubInstall: "$GRUB-install"
-grubMkconfig: "$GRUB-mkconfig"
-grubCfg: "/boot/$GRUB/grub.cfg"
-grubProbe: "$GRUB-probe"
-efiBootMgr: "efibootmgr"
-efiBootloaderId: "$DISTRO_ID"
-installEFIFallback: true
-EOF
-
-cat > "$MOD/grubcfg.conf" << EOF
----
-overwrite: false
-keepDistributor: true
-EOF
-
-cat > "$MOD/initramfs.conf" << EOF
----
-kernel: all
-EOF
-
-echo "---" > "$MOD/dracut.conf"
-
-cat > "$MOD/machineid.conf" << EOF
----
-systemd: true
-dbus: true
-dbus-symlink: true
-EOF
-
-# The squashfs is a bind of "/", so a separate /boot partition (common on Gentoo and Fedora) is
-# empty in the clone: give the installed system a kernel before the initramfs step. Runs on the
-# live system (dontChroot) and finds Calamares' target root itself.
-cat > "$CFG/scripts/cdb-kernel.sh" << 'EOF'
-#!/bin/sh
-R="${1:-}"
-[ -n "$R" ] || R=$(awk '$2 ~ /^\/tmp\/calamares-root-[^\/]*$/ {print $2}' /proc/mounts | head -n 1)
-[ -d "$R" ] || { echo "cdb-kernel: target root not found"; exit 1; }
-KV=$(uname -r)
-if ls "$R"/boot/vmlinuz-* "$R"/boot/kernel-* >/dev/null 2>&1; then
-    exit 0
-fi
-mkdir -p "$R/boot"
-for k in "$R/usr/lib/modules/$KV/vmlinuz" "$R/lib/modules/$KV/vmlinuz" \
-         /run/live/medium/live/vmlinuz /run/initramfs/live/live/vmlinuz; do
-    if [ -f "$k" ]; then
-        cp "$k" "$R/boot/vmlinuz-$KV"
-        echo "cdb-kernel: /boot was empty, installed $k as /boot/vmlinuz-$KV"
-        break
-    fi
-done
-[ -f "$R/boot/vmlinuz-$KV" ] || { echo "cdb-kernel: no kernel found for $KV"; exit 1; }
-# Fedora's GRUB boots BLS entries: create the entry for the copied kernel
-if [ "@FAMILY@" = fedora ] && [ -x "$R/usr/bin/kernel-install" ]; then
-    chroot "$R" kernel-install add "$KV" "/boot/vmlinuz-$KV" || true
-fi
-exit 0
-EOF
-sed -i "s/@FAMILY@/$FAMILY/" "$CFG/scripts/cdb-kernel.sh"
-chmod 755 "$CFG/scripts/cdb-kernel.sh"
-cat > "$MOD/shellprocess_cdbkernel.conf" << EOF
----
-dontChroot: true
-timeout: 600
-script:
-    - "/etc/calamares/scripts/cdb-kernel.sh"
-EOF
-
-REBOOT="reboot"
-[ "$SYSTEMD" = 1 ] && REBOOT="systemctl -i reboot"
-cat > "$MOD/finished.conf" << EOF
----
-restartNowEnabled: true
-restartNowChecked: false
-restartNowCommand: "$REBOOT"
-EOF
-
-cat > "$MOD/welcome.conf" << EOF
----
-showSupportUrl: false
-showKnownIssuesUrl: false
-showReleaseNotesUrl: false
-requirements:
-    requiredStorage: 10
-    requiredRam: 1.0
-    check:
-        - storage
-        - ram
-        - root
-    required:
-        - storage
-        - root
-EOF
-
-echo "-> Calamares configured for $FAMILY (unpacks $UNPACK, $FSTYPE default, $GRUB bootloader)."
-)CDB";
+)CBL";
 
 // Alpine (Calamares does not run there): installs the cloned system from the live ISO back onto a
 // disk - not a fresh setup-alpine install. Run from the live session. Plain sh (BusyBox).
 // $1 target disk (/dev/sda, /dev/nvme0n1, ...), $2 ext4 | btrfs, $3 = 1 for btrfs compress=zstd:22
-inline const char* ALPINE_INSTALLER = R"CDB(
+inline const char* ALPINE_INSTALLER = R"CBL(
 DISK="$1"
 FS="${2:-ext4}"
 COMPRESS="${3:-0}"
-T=/mnt/cdb-target
-LIVE_ROOT=/lib/live/mount/rootfs/filesystem.squashfs        # mounted by the CDB-SIDECAR
+T=/mnt/cbl-target
+LIVE_ROOT=/lib/live/mount/rootfs/filesystem.squashfs        # mounted by the CBL-SIDECAR
 LIVE_SQ=/lib/live/mount/medium/live/filesystem.squashfs
 
 fail() { echo "[FATAL ERROR] $*"; exit 1; }
@@ -560,7 +254,7 @@ if [ ! -d "$LIVE_ROOT/etc" ] && [ ! -f "$LIVE_SQ" ]; then
     # The live boot did not leave its mounts where expected: find the ISO by its label
     MEDIUM=$(findfs "LABEL=@@LIVE_LABEL@@" 2>/dev/null || blkid -L "@@LIVE_LABEL@@" 2>/dev/null || true)
     [ -n "$MEDIUM" ] || fail "the cloned system was not found - run this from the claudebackup live ISO."
-    OWN_MEDIUM=/mnt/cdb-medium
+    OWN_MEDIUM=/mnt/cbl-medium
     mkdir -p "$OWN_MEDIUM"
     mount -o ro "$MEDIUM" "$OWN_MEDIUM" || fail "cannot mount the live medium $MEDIUM."
     LIVE_SQ="$OWN_MEDIUM/live/filesystem.squashfs"
@@ -568,11 +262,11 @@ if [ ! -d "$LIVE_ROOT/etc" ] && [ ! -f "$LIVE_SQ" ]; then
 fi
 case "$MEDIUM" in "$DISK"*) fail "$DISK holds the live ISO you booted from." ;; esac
 for tool in sfdisk mkfs.vfat grub-install grub-mkconfig mkinitfs; do
-    command -v "$tool" >/dev/null 2>&1 || fail "$tool is missing - run Setup > Alpine Installer Tools before building the ISO."
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is missing - run dev-release/build.sh (Alpine installer tools) before building the ISO."
 done
 MKFS=mkfs.ext4
 [ "$FS" = btrfs ] && MKFS=mkfs.btrfs
-command -v "$MKFS" >/dev/null 2>&1 || fail "$MKFS is missing - run Setup > Alpine Installer Tools before building the ISO."
+command -v "$MKFS" >/dev/null 2>&1 || fail "$MKFS is missing - run dev-release/build.sh (Alpine installer tools) before building the ISO."
 
 UEFI=0
 [ -d /sys/firmware/efi ] && UEFI=1
@@ -668,47 +362,7 @@ grub-mkconfig -o /boot/grub/grub.cfg
 CHROOT
 
 echo "-> The cloned system is installed on $DISK. Remove the live medium and reboot."
-)CDB";
-
-// Gentoo: emerge refuses to install anything without the ::gentoo repository and a valid profile.
-// Systems installed from a live ISO often have neither (no repo, make.profile copied as a folder).
-// Fetch the repo only if it is missing, then point make.profile at a real profile.
-inline const char* GENTOO_PORTAGE_PREP = R"CDB(
-REPO=$(portageq get_repo_path / gentoo 2>/dev/null || true)
-[ -n "$REPO" ] || REPO=/var/db/repos/gentoo
-if [ ! -d "$REPO/profiles" ]; then
-    echo "-> No Gentoo repository in $REPO, fetching it (emerge-webrsync)..."
-    mkdir -p "$REPO"
-    emerge-webrsync || emerge --sync
-fi
-[ -d "$REPO/profiles" ] || { echo "[FATAL ERROR] the Gentoo repository could not be fetched into $REPO."; exit 1; }
-
-MP=/etc/portage/make.profile
-if [ ! -L "$MP" ] || [ ! -e "$MP" ]; then
-    # The live ISO's copied profile folder usually names the profile it came from
-    WANT=""
-    if [ -f "$MP/parent" ]; then
-        WANT=$(head -n 1 "$MP/parent" | sed -e 's#^gentoo:##' -e 's#.*/profiles/##')
-    fi
-    if [ -z "$WANT" ] || [ ! -d "$REPO/profiles/$WANT" ]; then
-        ARCH=$(portageq envvar ARCH 2>/dev/null || echo amd64)
-        LIST=$(eselect profile list 2>/dev/null | grep '(stable)' | awk '{print $2}')
-        WANT=""
-        for suffix in /desktop/plasma /desktop ""; do
-            WANT=$(echo "$LIST" | grep -E "^default/linux/$ARCH/[0-9.]+$suffix\$" | sort -V | tail -n 1)
-            [ -n "$WANT" ] && break
-        done
-    fi
-    [ -n "$WANT" ] || { echo "[FATAL ERROR] no Gentoo profile found - pick one with: eselect profile list / set"; exit 1; }
-    if [ -e "$MP" ] || [ -L "$MP" ]; then
-        rm -rf "$MP.livecd-backup"
-        mv "$MP" "$MP.livecd-backup"
-    fi
-    echo "-> Setting the Gentoo profile to $WANT"
-    eselect profile set "$WANT"
-fi
-echo "-> Portage is ready (repository $REPO, profile $(readlink "$MP"))."
-)CDB";
+)CBL";
 
 // Applies the build-time constants to an embedded script
 inline std::string render(const char* script) {

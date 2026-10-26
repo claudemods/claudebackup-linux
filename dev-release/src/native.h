@@ -34,7 +34,7 @@ inline int runShell(const std::string& script, const std::string& chrootPath, co
     std::string hostDir = chrootPath.empty() ? STAGING_DIR + "/run" : chrootPath + "/tmp";
     mkdirP(hostDir, chrootPath.empty() ? 0700 : 01777);
 
-    std::string tmpl = hostDir + "/cdb-exec-XXXXXX";
+    std::string tmpl = hostDir + "/cbl-exec-XXXXXX";
     std::vector<char> buf(tmpl.begin(), tmpl.end());
     buf.push_back('\0');
     int fd = mkstemp(buf.data());
@@ -299,7 +299,7 @@ inline std::string generateExcludeList(const Context& c) {
     if (startsWith(c.isoDir, "/") && c.isoDir.size() > 1) ex.push_back(c.isoDir.substr(1));
 
     for (const char* e : {
-        "boot/cdb-initrd.img",
+        "boot/cbl-initrd.img",
         "etc/fstab", "etc/crypttab", "etc/mtab",
         "etc/udev/rules.d/70-persistent-cd.rules", "etc/udev/rules.d/70-persistent-net.rules",
         "swapfile"
@@ -527,7 +527,7 @@ inline std::string erofsCompressionArgs() {
 inline std::string erofsCompressionName() { return kernelHasErofsZstd() ? "zstd" : "lz4hc"; }
 
 inline bool runMkerofs(const Context& c, const std::string& dest) {
-    if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (use Setup > Install Needed Tools)"); return false; }
+    if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (run dev-release/build.sh)"); return false; }
     if (!kernelHasErofs()) { logError("The running kernel has no erofs support (CONFIG_EROFS_FS), so a live ISO built from it could not boot an erofs image."); return false; }
 
     mkdirP(dirName(dest));
@@ -704,7 +704,7 @@ inline bool ensureBootloaders() {
 // Extracted fresh every time so a rebuilt binary never uses stale files.
 inline bool ensureArchFiles() {
     const std::string dir = STAGING_DIR + "/arch";
-    if (!commandExists("unzip")) { logError("unzip is not installed (use Setup > Install Needed Tools)"); return false; }
+    if (!commandExists("unzip")) { logError("unzip is not installed (run dev-release/build.sh)"); return false; }
     logNormal("Extracting the embedded Arch boot files...");
     runCommand("rm -rf " + shq(dir));
     if (!resources::extract(resources::Zip::BuildImageArch, dir)) {

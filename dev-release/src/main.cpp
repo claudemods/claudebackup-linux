@@ -10,7 +10,7 @@
 #include "menu.h"
 
 // Passed to the re-launched root process so it knows who started it, whichever tool was used
-const std::string USER_ARG = "--cdb-user=";
+const std::string USER_ARG = "--cbl-user=";
 
 // The menu needs root for mounts. Distros differ in how you get it (sudo, doas on Alpine,
 // run0 on newer systemd, pkexec, or plain su), so try each that is installed, in that order.
@@ -55,7 +55,7 @@ void relaunchAsRoot(int argc, char* argv[]) {
 // The terminal ignored the resize request: open the app again in a new window of the same
 // terminal, sized to fit (as the user, before asking for root). Returns true if it opened.
 bool reopenInBiggerTerminal(int argc, char* argv[], int rows, int cols) {
-    if (getenv("CDB_REOPENED")) return false;                        // never loop
+    if (getenv("CBL_REOPENED")) return false;                        // never loop
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
 
     const std::string R = std::to_string(rows), C = std::to_string(cols);
@@ -79,7 +79,7 @@ bool reopenInBiggerTerminal(int argc, char* argv[], int rows, int cols) {
     cmd.push_back(n > 0 ? std::string(self, n) : argv[0]);
     for (int i = 1; i < argc; i++) cmd.push_back(argv[i]);
 
-    setenv("CDB_REOPENED", "1", 1);
+    setenv("CBL_REOPENED", "1", 1);
     pid_t pid = fork();
     if (pid < 0) return false;
     if (pid == 0) {
@@ -111,7 +111,7 @@ void fitTerminal(int argc, char* argv[], bool mayReopen) {
     sleep(2);
 }
 
-// Who started us: our own --cdb-user=, else what sudo / doas / pkexec leave behind, else the login name
+// Who started us: our own --cbl-user=, else what sudo / doas / pkexec leave behind, else the login name
 std::string originalUser(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
