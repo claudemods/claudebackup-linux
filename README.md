@@ -88,7 +88,7 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 ## Stage 3 erofs support 🐧CURRENTLY HERE 📍
 Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
 - [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
-- [ ] Debian 🔴 — [ ] boots from tests — [ ] installation support
+- [x] Debian 🔴 — [x] boots from tests — [x] installation support ✅
 - [ ] Ubuntu/KDE Neon 🟠 — [ ] boots from tests — [ ] installation support
 - [ ] Fedora 🔵 — [ ] boots from tests — [ ] installation support
 - [ ] openSUSE 🟢 — [ ] boots from tests — [ ] installation support
