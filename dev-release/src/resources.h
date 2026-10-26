@@ -52,6 +52,12 @@ inline bool extract(Zip z, const std::string& destDir) {
     std::string zipPath = destDir + "/" + name;
     if (!writeFile(zipPath, std::string(begin, end - begin))) { logError("cannot write " + zipPath); return false; }
     int rc = runCommand("unzip -o -q " + shq(zipPath) + " -d " + shq(destDir));
+    // claudemods.zip is bzip2-compressed and some distros' unzip is built without bzip2,
+    // so fall back to extractors that have it
+    if (rc != 0) rc = runCommand("python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' " +
+                                 shq(zipPath) + " " + shq(destDir));
+    if (rc != 0) rc = runCommand("bsdtar -xf " + shq(zipPath) + " -C " + shq(destDir));
+    if (rc != 0) rc = runCommand("7z x -y -bso0 -o" + shq(destDir) + " " + shq(zipPath));
     unlink(zipPath.c_str());
     if (rc != 0) logError("unzip of " + name + " failed");
     return rc == 0;
