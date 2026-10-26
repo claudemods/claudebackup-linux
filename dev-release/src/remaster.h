@@ -16,6 +16,8 @@ struct RemasterOptions {
     std::string cloneDir;             // bind point for "/", empty = workDir/clone_system_temp
     std::string imageFormat;          // squashfs | erofs, empty = squashfs
     std::string customDir;            // edited copies from Setup > Edit Configs, empty = none
+    std::string isoTreeDir;           // where the ISO structure is built, empty = <output dir>/isodir
+    bool cleanCache = true;           // leave package caches out of the image
     int level = 0;
     int ramMode = -1;                 // -1 = default, 0/1 = override
 };
@@ -42,6 +44,7 @@ inline Context makeContext(const RemasterOptions& o) {
     if (o.ramMode >= 0) c.settings.ramMode = (o.ramMode == 1);
     if (o.imageFormat == "erofs") c.settings.imageFormat = "erofs";
     c.customDir = o.customDir;
+    c.cleanCache = o.cleanCache;
     c.ramModeEnabled = c.settings.ramMode;
     c.isGitHubAction = isDirectory("/home/runner/work");
     c.stopAfter = o.stopAfter;
@@ -60,7 +63,9 @@ inline Context makeContext(const RemasterOptions& o) {
     if (name.empty()) name = makeIsoName(c.distro, "");
     else if (!endsWith(name, ".iso")) name += ".iso";
 
-    c.isoDir = snapshotDir + "/isodir";
+    // The ISO structure lives in the user's config folder like in the claudemods multi iso creator;
+    // the output directory only receives the finished ISO
+    c.isoDir = !o.isoTreeDir.empty() ? o.isoTreeDir : snapshotDir + "/isodir";
     c.liveRoot = c.workDir + "/liveroot";
     c.isoPath = snapshotDir + "/" + name;
     if (snapshotDir != c.workDir) c.symlinkIsoPath = c.workDir + "/" + baseName(c.isoPath);

@@ -20,6 +20,7 @@ struct Context {
     std::string cloneDir;            // "/" is bind-mounted here for mksquashfs (Setup > Clone Directory)
     std::string isoTag = "2026";     // Arch: ISO volume label, kernels.cfg label= (cmiadvanced ISO Tag)
     std::string customDir;           // the user's edited copies (Setup > Edit Configs): grub.cfg, kernels.cfg, ...
+    bool cleanCache = true;          // leave package caches (/var/cache/pacman/pkg, ...) out of the image
     bool debugPlan = false;
     bool isGitHubAction = false;
     bool ramModeEnabled = true;

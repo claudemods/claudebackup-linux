@@ -243,6 +243,43 @@ inline std::vector<std::string> swapFilesFromFstab() {
     return out;
 }
 
+// Downloaded packages and temp files that only make the image bigger: {folder, exclude rule relative
+// to the root of the clone}. Left out of the image, the running system's own copies are not touched.
+struct CacheDir { std::string dir, rule; };
+
+inline std::vector<CacheDir> packageCaches(const Distro& d) {
+    std::vector<CacheDir> v;
+    if (d.family == "archlinux")      v.push_back({"/var/cache/pacman/pkg", "var/cache/pacman/pkg/*"});
+    else if (d.family == "debian")    v.push_back({"/var/cache/apt/archives", "var/cache/apt/archives/*.deb"});
+    else if (d.family == "fedora") {
+        v.push_back({"/var/cache/dnf", "var/cache/dnf/*"});
+        v.push_back({"/var/cache/libdnf5", "var/cache/libdnf5/*"});
+    }
+    else if (d.family == "opensuse")  v.push_back({"/var/cache/zypp/packages", "var/cache/zypp/packages/*"});
+    else if (d.family == "alpine")    v.push_back({"/var/cache/apk", "var/cache/apk/*"});
+    else if (d.family == "gentoo") {
+        v.push_back({"/var/cache/distfiles", "var/cache/distfiles/*"});
+        v.push_back({"/var/cache/binpkgs", "var/cache/binpkgs/*"});
+    }
+    v.push_back({"/var/tmp", "var/tmp/*"});
+    return v;
+}
+
+// Says what is being left out of the image, with the size it saves (the step before mksquashfs / mkfs.erofs)
+inline bool reportPackageCaches(const Context& c) {
+    logNormal("Cleaning the package cache and temp files out of the image (your running system's own files are not touched):");
+    bool any = false;
+    for (const auto& p : packageCaches(c.distro)) {
+        if (!isDirectory(p.dir)) continue;
+        std::string size = captureCommand("du -sh " + shq(p.dir) + " 2>/dev/null | cut -f1");
+        if (size.empty() || size == "0" || size == "4.0K") continue;
+        logNormal("  " + p.dir + " (" + size + ")");
+        any = true;
+    }
+    if (!any) logNormal("  nothing to clean.");
+    return true;
+}
+
 inline std::string generateExcludeList(const Context& c) {
     // Only what cannot be cloned: virtual/runtime filesystems and mount points, our own work
     // directory, and the host-specific files that stop a live boot (fstab, crypttab, swap).
@@ -258,6 +295,8 @@ inline std::string generateExcludeList(const Context& c) {
     // liveroot copy and the (empty) bind point show up inside it
     ex.push_back(c.liveRoot.substr(1));
     ex.push_back(c.cloneDir.substr(1));
+    // the ISO structure (in the user's config folder) must not end up inside the image it contains
+    if (startsWith(c.isoDir, "/") && c.isoDir.size() > 1) ex.push_back(c.isoDir.substr(1));
 
     for (const char* e : {
         "boot/cdb-initrd.img",
@@ -267,6 +306,8 @@ inline std::string generateExcludeList(const Context& c) {
     }) ex.push_back(e);
 
     for (const auto& s : swapFilesFromFstab()) ex.push_back(s);
+
+    if (c.cleanCache) for (const auto& p : packageCaches(c.distro)) ex.push_back(p.rule);
 
     if (c.isGitHubAction) { ex.push_back("usr"); ex.push_back("var"); ex.push_back("opt"); }
     for (const auto& l : splitLines(readFile(CONFIG_DIR + "/custom.exclude.list"))) {
@@ -301,8 +342,48 @@ inline std::string squashfsCompressionArgs(const std::string& algo, const std::s
 // (cmiadvanced mountSystemToCloneDir: mount --bind / <cloneDir>)
 inline std::string cloneDir(const Context& c) { return c.cloneDir; }
 
-// mount --bind / <dir>, kept private (never propagates back) and read-only (mksquashfs only reads)
-inline bool bindRoot(const std::string& dir) {
+// Unmounts the bind of "/" and everything bound inside it, deepest first
+inline bool unbindRoot(const std::string& dir) {
+    if (dir.empty() || !isMounted(dir)) return true;
+    std::vector<std::string> targets;
+    for (const auto& m : mountPoints())
+        if (m == dir || startsWith(m, dir + "/")) targets.push_back(m);
+    std::sort(targets.begin(), targets.end(), [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
+    bool ok = true;
+    for (const auto& t : targets) if (!umountPath(t)) ok = false;
+    return ok;
+}
+
+// A bind of "/" only shows the root filesystem. Systems that keep /home, /var, /boot ... on their own
+// partition or btrfs subvolume (openSUSE, Fedora, a btrfs Arch...) would lose them, so those mounts
+// are listed here to be bound into the clone as well. Snapshots, removable media and the app's own
+// work tree are left out.
+inline std::vector<std::string> dataMounts(const std::vector<std::string>& skip) {
+    static const std::set<std::string> diskFs = {"btrfs", "ext2", "ext3", "ext4", "xfs", "f2fs"};
+    static const char* const never[] = {"/dev", "/proc", "/sys", "/run", "/tmp", "/mnt", "/media", "/snap"};
+
+    std::vector<std::string> out;
+    for (const auto& line : splitLines(readFile("/proc/mounts"))) {
+        std::stringstream ss(line);
+        std::string dev, path, type;
+        if (!(ss >> dev >> path >> type)) continue;
+        path = decodeMountPath(path);
+        if (path == "/" || !diskFs.count(type) || contains(path, "/.snapshots")) continue;
+
+        bool skipIt = false;
+        for (const char* n : never) if (path == n || startsWith(path, std::string(n) + "/")) skipIt = true;
+        for (const auto& s : skip) if (!s.empty() && (path == s || startsWith(path, s + "/"))) skipIt = true;
+        if (!skipIt && std::find(out.begin(), out.end(), path) == out.end()) out.push_back(path);
+    }
+    // parents first, so /boot is bound before /boot/grub2/...
+    std::stable_sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) { return a.size() < b.size(); });
+    return out;
+}
+
+// mount --bind / <dir>, then the separate data mounts (/home on its own subvolume, ...) inside it.
+// All kept private (never propagate back) and read-only (mksquashfs / mkfs.erofs only read).
+// skip: paths whose mounts must not be included (the work directory with its liveroot binds).
+inline bool bindRoot(const std::string& dir, const std::vector<std::string>& skip = {}) {
     mkdirP(dir);
     if (isMounted(dir)) return true;
     logNormal("Mounting system to: " + dir);
@@ -312,13 +393,23 @@ inline bool bindRoot(const std::string& dir) {
         umountPath(dir);
         return false;
     }
+
+    std::vector<std::string> skipAll = skip;
+    skipAll.push_back(dir);
+    for (const auto& m : dataMounts(skipAll)) {
+        const std::string dst = dir + m;
+        if (!isDirectory(dst)) { logWarning(m + " is a separate filesystem but has no mount point in the root filesystem - not included."); continue; }
+        if (!doMount(m.c_str(), dst, nullptr, MS_BIND) ||
+            !doMount(nullptr, dst, nullptr, MS_PRIVATE) ||
+            !doMount(nullptr, dst, nullptr, MS_REMOUNT | MS_BIND | MS_RDONLY)) {
+            logError("Could not include " + m + " in the clone.");
+            unbindRoot(dir);
+            return false;
+        }
+        logNormal("Including " + m + " (separate filesystem / subvolume)");
+    }
     logSuccess("System mounted successfully to: " + dir);
     return true;
-}
-
-inline bool unbindRoot(const std::string& dir) {
-    if (dir.empty() || !isMounted(dir)) return true;
-    return umountPath(dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +533,7 @@ inline bool runMkerofs(const Context& c, const std::string& dest) {
     mkdirP(dirName(dest));
     unlink(dest.c_str());
     const std::string src = cloneDir(c);
-    if (!bindRoot(src)) return false;
+    if (!bindRoot(src, {c.workDir})) return false;
 
     std::string cmd = "mkfs.erofs " + erofsCompressionArgs() + " -T" + std::to_string((long long)time(nullptr)) +
         " --ignore-mtime" + erofsExcludeArgs(c) + " " + shq(dest) + " " + shq(src);
@@ -483,7 +574,7 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
 
     mkdirP(dirName(dest));
     const std::string src = cloneDir(c);
-    if (!bindRoot(src)) return false;
+    if (!bindRoot(src, {c.workDir})) return false;
 
     std::string cmd;
     if (c.distro.family == "archlinux") {

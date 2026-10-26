@@ -145,6 +145,10 @@ inline std::vector<Step> build(const Context& c) {
         return native::runShell(families::copyKernelCmd(c), "") == 0;
     }});
 
+    // 15.5 Package caches stay out of the image
+    if (c.cleanCache)
+        steps.push_back({"clean-package-cache", "Leave package caches and temp files out of the image", [&c]() { return native::reportPackageCaches(c); }});
+
     // 16. Squashfs
     steps.push_back({"mksquashfs", baseName(families::squashfsDest(c)) + (c.settings.imageFormat == "erofs" ? " (erofs)" : "") + " compression", [&c]() {
         return native::runMksquashfs(c, families::squashfsDest(c));

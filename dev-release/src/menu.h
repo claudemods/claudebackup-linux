@@ -35,6 +35,7 @@ struct MenuConfig {
     std::string isoTag;        // Arch volume label, empty = 2026
     std::string cloneDir;      // <parent>/clone_system_temp, "/" is bound here; empty = default
     std::string imageFormat = "squashfs";   // squashfs | erofs
+    bool cleanCache = true;    // leave package caches out of the image
 };
 MenuConfig mcfg;
 
@@ -51,17 +52,29 @@ std::string userHome() {
 
 std::string defaultCloneDir() { return userHome() + "/clone_system_temp"; }
 
+// The app runs as root, so folders it creates (clone / work / output directories) would belong to
+// root. Hand the folder itself to the user who started it; not recursive: inside are root's mounts
+// and build tree.
+void chownToUser(const std::string& dir) {
+    if (USERNAME.empty() || USERNAME == "root" || !isDirectory(dir)) return;
+    runPlain("chown \"$(id -u " + shq(USERNAME) + "):$(id -g " + shq(USERNAME) + ")\" " + shq(dir) + " 2>/dev/null");
+}
+
 std::string configDirPath() { return userHome() + "/.config/" + APP_BIN; }
 std::string configFilePath() { return configDirPath() + "/configuration.txt"; }
 // The user's edited copies of grub.cfg, kernels.cfg, ... (Setup > Edit Configs)
 std::string customDirPath() { return configDirPath() + "/custom"; }
+// The ISO structure (boot files, kernel, initramfs, the image) as in the claudemods multi iso creator's
+// ~/.config/cmi/build-image-arch-img; the finished ISO still goes to the output directory
+std::string isoTreeDirPath() { return configDirPath() + (onFamily("archlinux") ? "/build-image-arch-img" : "/build-image"); }
 
 void saveConfig() {
     mkdirP(configDirPath());
     std::ofstream f(configFilePath());
     if (!f.is_open()) { std::cerr << COLOR_RED << "Failed to save configuration to " << configFilePath() << COLOR_RESET << std::endl; return; }
-    // We run as root: keep the user's own config folder owned by the user
-    runCommand("chown -R " + shq(USERNAME) + " " + shq(configDirPath()) + " 2>/dev/null");
+    // We run as root: keep the user's own config folder and file owned by the user (not recursive:
+    // the ISO structure inside is large and belongs to the build)
+    runPlain("chown " + shq(USERNAME) + " " + shq(configDirPath()) + " " + shq(configFilePath()) + " 2>/dev/null");
     f << "isoName=" << mcfg.isoName << "\n";
     f << "workDir=" << mcfg.workDir << "\n";
     f << "outputDir=" << mcfg.outputDir << "\n";
@@ -70,6 +83,7 @@ void saveConfig() {
     f << "isoTag=" << mcfg.isoTag << "\n";
     f << "cloneDir=" << mcfg.cloneDir << "\n";
     f << "imageFormat=" << mcfg.imageFormat << "\n";
+    f << "cleanCache=" << (mcfg.cleanCache ? "1" : "0") << "\n";
 }
 
 void loadConfig() {
@@ -85,6 +99,7 @@ void loadConfig() {
         else if (k == "isoTag") mcfg.isoTag = v;
         else if (k == "cloneDir") mcfg.cloneDir = v;
         else if (k == "imageFormat") mcfg.imageFormat = (v == "erofs") ? "erofs" : "squashfs";
+        else if (k == "cleanCache") mcfg.cleanCache = (v != "0");
     }
 }
 
@@ -100,6 +115,8 @@ RemasterOptions currentOptions() {
     o.cloneDir = mcfg.cloneDir.empty() ? defaultCloneDir() : mcfg.cloneDir;
     o.imageFormat = mcfg.imageFormat;
     o.customDir = customDirPath();
+    o.isoTreeDir = isoTreeDirPath();
+    o.cleanCache = mcfg.cleanCache;
     return o;
 }
 
@@ -326,8 +343,8 @@ std::string guideText() {
     std::string g =
         "A full clone: your users, passwords, settings and files are copied into the ISO exactly as\n"
         "they are. No live account is created and nothing is added to the clone.\n"
-        "The image is made from '/' bind-mounted at your Clone Directory. A bind of '/' only shows the\n"
-        "root filesystem: separate partitions or btrfs subvolumes (e.g. @home, /boot) are not included.\n"
+        "The image is made from '/' bind-mounted at your Clone Directory, together with its separate\n"
+        "partitions and btrfs subvolumes (/home, /var, /boot...). Snapshots and /mnt, /media, /run, /tmp are left out.\n"
         "Each box under 'Current Configuration' shows what is ready ([x]) or still to do ([ ]).\n\n";
     int n = 0;
     auto step = [&](const std::string& text) { g += std::to_string(++n) + ". " + text + "\n"; };
@@ -395,9 +412,14 @@ void createISO() {
     clearScreen();
     std::cout << COLOR_CYAN << "Starting ISO creation process...\n" << COLOR_RESET;
     bool ok = remaster::run(currentOptions());
+    // Folders the build created as root, in the user's home or not, belong to the user
+    chownToUser(mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir);
+    chownToUser(mcfg.outputDir.empty() ? (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir) : mcfg.outputDir);
+    chownToUser(mcfg.cloneDir.empty() ? defaultCloneDir() : mcfg.cloneDir);
+    chownToUser(isoTreeDirPath());
     if (ok) {
         std::string dir = mcfg.outputDir.empty() ? (mcfg.workDir.empty() ? DEFAULT_WORK_DIR : mcfg.workDir) : mcfg.outputDir;
-        runCommand("chown -R " + shq(USERNAME) + " " + shq(dir) + "/*.iso 2>/dev/null");
+        runPlain("chown " + shq(USERNAME) + " " + shq(dir) + "/*.iso 2>/dev/null");
         std::cout << COLOR_GREEN << "\nISO creation finished." << COLOR_RESET << std::endl;
     } else {
         std::cout << COLOR_RED << "\nISO creation failed. See " << LOG_FILE << COLOR_RESET << std::endl;
@@ -498,6 +520,7 @@ void setupCloneDir() {
     }
     mcfg.cloneDir = (parent == "/" ? "" : parent) + "/clone_system_temp";
     mkdirP(mcfg.cloneDir);
+    chownToUser(mcfg.cloneDir);
     saveConfig();
 }
 
@@ -674,6 +697,12 @@ std::vector<SetupItem> setupItems() {
     }});
     if (sysDistro().supported()) items.push_back({"Set Image Format (squashfs / erofs)", setupImageFormat});
     items.push_back({"Toggle RAM Mode Boot Entry", [] { mcfg.ramMode = !mcfg.ramMode; saveConfig(); }});
+    items.push_back({"Toggle Package Cache Cleaning (kept out of the image)", [] {
+        mcfg.cleanCache = !mcfg.cleanCache;
+        saveConfig();
+        std::cout << COLOR_GREEN << "Package cache cleaning is now " << (mcfg.cleanCache ? "ON" : "OFF") << COLOR_RESET << std::endl;
+        pressAnyKey();
+    }});
     if (alpine) items.push_back({"Alpine Installer Tools (to install the clone back to disk)", setupAlpineInstallerTools});
     else if (sysDistro().supported()) items.push_back({"Install Calamares (ext4 / btrfs zstd:22)", setupCalamares});
     if (sysDistro().supported()) items.push_back({"Edit Configs (GRUB, boot text, initramfs, Calamares)", showEditMenu});
