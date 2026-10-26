@@ -11,6 +11,7 @@
 #include <functional>
 #include <sys/ioctl.h>
 #include "remaster.h"
+#include "update.h"
 
 // Interactive menu, same look and feel as the claudemods multi iso creator:
 // red ASCII banner, live clock, df line, checkbox status list, arrow-key navigation.
@@ -226,7 +227,7 @@ std::string statusBlock() {
     bool toolsOk = remaster::missingTools(d).empty();
 
     std::string s = COLOR_CYAN + "Current Configuration:" + COLOR_RESET + "\n";
-    s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? " (family: " + d.family + ")" : " (not supported)"));
+    s += checkLine(d.supported(), "Distro: " + d.prettyName + (d.supported() ? "" : " (not supported)"));
     s += checkLine(toolsOk, "Needed Tools");
     s += checkLine(remaster::bootFilesReady(d), d.family == "archlinux" ? "Boot Files: embedded claudemods zip" : "Bootloaders");
     if (d.family == "archlinux") s += checkLine(remaster::mkinitcpioConfigReady(), "mkinitcpio Config");
@@ -267,7 +268,7 @@ int showMenu(const std::string& title, const std::vector<std::string>& items, in
     std::string line;
     while (std::getline(ascii_stream, line)) menuBuffer += COLOR_RED + line + COLOR_RESET + "\n";
 
-    menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + "\n";
+    menuBuffer += COLOR_RED + "                    " + APP_NAME + " " + APP_VERSION + COLOR_RESET + update::statusText() + "\n";
     menuBuffer += COLOR_RED + "Back up your running " + sysDistro().prettyName + " system as a bootable live ISO" + COLOR_RESET + "\n";
     menuBuffer += COLOR_RED + "Sailing the 7 seas like Penguin's Eggs Remastersys, Refracta, Systemback and father Knoppix!" + COLOR_RESET + "\n";
     {
@@ -352,9 +353,11 @@ std::string guideText() {
 
     // Installing is done once by dev-release/build.sh, before the app runs
     if (alpine) step("dev-release/build.sh              tools for this distro + the Alpine installer tools (the live\n" +
-                     pad + "ISO's 'Install Cloned System To Disk'), then builds and starts the app");
+                     pad + "ISO's 'Install Cloned System To Disk'), then builds and starts the app;\n" +
+                     pad + "adds an 'Install' Desktop shortcut (Konsole: " + APP_BIN + " alpine)");
     else        step("dev-release/build.sh              tools for this distro + Calamares (ext4 or btrfs zstd:22,\n" +
-                     pad + "squashfs or erofs), then builds and starts the app" +
+                     pad + "squashfs or erofs), then builds and starts the app;\n" +
+                     pad + "adds an 'Install' Desktop shortcut that opens Calamares" +
                      (gentoo ? "\n" + pad + "(fetches the gentoo repo / fixes the profile if needed)" : std::string()));
     if (!arch) step("Setup > Download Bootloaders      one-off download of the BIOS/UEFI boot files");
     else       step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
@@ -367,9 +370,11 @@ std::string guideText() {
     step(std::string("Setup > RAM Mode                  adds a ") + (arch ? "copytoram=y" : "toram") + " boot entry");
     step("Detected System And Build Steps   check it says 'Support: yes'");
     step("Create Bootable ISO               everything is unmounted at the end, even on Ctrl+C");
-    if (alpine) step("Install Cloned System To Disk     (in the live ISO) your clone back on a disk, not a\n" +
+    if (alpine) step("Install Cloned System To Disk     (in the live ISO: this menu item, the Desktop shortcut\n" +
+                     pad + "or '" + APP_BIN + " alpine') your clone back on a disk, not a\n" +
                      pad + "fresh Alpine: ext4 or btrfs, GRUB for UEFI or BIOS");
-    else        step("Launch Calamares                  (in the live ISO) installs the clone to a disk");
+    else        step("Launch Calamares                  (in the live ISO: this menu item or the Desktop shortcut)\n" +
+                     pad + "installs the clone to a disk");
     g += "   Install ISO To USB erases the whole target drive. Test the ISO in a VM (UEFI) first.\n\n";
     if (gentoo)
         g += "Gentoo: the image is squashfs gzip. The kernel needs CONFIG_SQUASHFS, CONFIG_OVERLAY_FS,\n"
@@ -726,8 +731,47 @@ std::vector<std::string> mainMenuItems() {
         "Check Disk Usage",
         "Install ISO To USB",
         onFamily("alpine") ? "Install Cloned System To Disk" : "Launch Calamares",
+        "Update claudebackup-linux",
         "Exit"
     };
+}
+
+// ---------------------------------------------------------------------------
+// Update: installed version -> GitHub's, download + build + install, restart into the new one
+// ---------------------------------------------------------------------------
+void updateApp() {
+    clearScreen();
+    std::cout << COLOR_CYAN << "Update " << APP_NAME << COLOR_RESET << "\n" << COLOR_GREEN
+              << "Installed: " << APP_VERSION << "\n"
+              << "Checking " << REPO_URL << " ..." << COLOR_RESET << std::endl;
+    std::string latest = update::latestVersion();
+    if (latest.empty()) {
+        std::cout << COLOR_RED << "Could not read the latest version (offline, or GitHub unreachable)." << COLOR_RESET << std::endl;
+        pressAnyKey();
+        return;
+    }
+    const bool newer = update::isNewer(latest, APP_VERSION);
+    std::cout << COLOR_GREEN << "Latest:    " << latest << (newer ? "" : " (you have it)") << COLOR_RESET << "\n\n";
+
+    std::string q = newer ? "Update " + APP_VERSION + " -> " + latest + "? (y/N): "
+                          : "You are on the latest version. Reinstall " + latest + " anyway? (y/N): ";
+    std::string a = getUserInput(q);
+    if (a != "y" && a != "Y") { std::cout << COLOR_CYAN << "No changes made." << COLOR_RESET << std::endl; pressAnyKey(); return; }
+
+    if (!update::downloadBuildInstall()) { pressAnyKey(); return; }
+    logSuccess("Updated to " + latest + " - restarting...");
+
+    // Hand the terminal back in its normal state: the new process saves and restores whatever it finds
+    struct termios t;
+    tcgetattr(STDIN_FILENO, &t);
+    t.c_lflag |= (ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    std::cout << "\033[?25h" << std::flush;
+
+    std::string userArg = "--cbl-user=" + USERNAME;
+    execl(("/usr/bin/" + APP_BIN).c_str(), APP_BIN.c_str(), userArg.c_str(), (char*)nullptr);
+    logError("Restart failed - start " + APP_BIN + " again to use " + latest + ".");
+    pressAnyKey();
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +821,8 @@ void showMainMenu() {
                 if (alpine) installClonedSystem();
                 else { runCommand("calamares"); pressAnyKey(); }
                 break;
-            case 7: return;
+            case 7: updateApp(); break;
+            case 8: return;
         }
     }
 }

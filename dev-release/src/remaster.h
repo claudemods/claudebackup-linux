@@ -208,7 +208,7 @@ inline bool run(const RemasterOptions& opts) {
         return false;
     }
 
-    logNormal("Distro: " + c.distro.prettyName + " (family: " + c.distro.family + ")");
+    logNormal("Distro: " + c.distro.prettyName);
     if (!c.distro.supported()) { logError("Distro '" + c.distro.distroID + "' is not mapped to a supported family."); return false; }
 
     auto missing = missingTools(c.distro);

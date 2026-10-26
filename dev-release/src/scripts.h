@@ -122,7 +122,8 @@ EOF
     exit 0
 fi
 
-MENU_TITLE="claudebackup linux"
+# The boot menu shows the distro's own name (e.g. "KDE neon 6.4"), not the app's
+MENU_TITLE="$PRETTY_NAME"
 START_LABEL="Start"
 RAM_LABEL="RAM mode"
 

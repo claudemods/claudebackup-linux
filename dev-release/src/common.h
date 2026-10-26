@@ -15,7 +15,11 @@
 
 // Product identity
 const std::string APP_NAME    = "claudebackup linux";
-const std::string APP_VERSION = "v1.0";
+// Set by the Makefile from dev-release/version.txt
+#ifndef CBL_VERSION
+#define CBL_VERSION "v1.0"
+#endif
+const std::string APP_VERSION = std::string(CBL_VERSION).empty() ? "v1.0" : CBL_VERSION;
 const std::string APP_BIN     = "claudebackup-linux";
 
 // Filesystem label of the live medium (referenced by boot params, menus and xorriso)
@@ -28,6 +32,12 @@ const std::string DEFAULT_WORK_DIR = "/home/claudebackup";
 const std::string LOG_FILE    = "/var/log/claudebackup-linux.log";
 const std::string BOOTLOADER_URL =
     "https://github.com/pieroproietti/penguins-bootloaders/releases/download/v26.1.16/bootloaders.tar.gz";
+
+// Updates: the version on GitHub's main branch, and the source to build the update from
+const std::string REPO_URL           = "https://github.com/claudemods/claudebackup-linux";
+const std::string REMOTE_VERSION_URL = "https://raw.githubusercontent.com/claudemods/claudebackup-linux/main/dev-release/version.txt";
+const std::string SOURCE_TARBALL_URL = "https://github.com/claudemods/claudebackup-linux/archive/refs/heads/main.tar.gz";
+const std::string SOURCE_TARBALL_DIR = "claudebackup-linux-main";   // top folder inside the tarball
 
 // ANSI color codes
 const std::string COLOR_RED    = "\033[31m";

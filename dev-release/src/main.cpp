@@ -129,19 +129,40 @@ std::string originalUser(int argc, char* argv[]) {
     return pw ? pw->pw_name : "root";
 }
 
+bool hasArg(int argc, char* argv[], const std::string& arg) {
+    for (int i = 1; i < argc; i++) if (arg == argv[i]) return true;
+    return false;
+}
+
 int main(int argc, char* argv[]) {
+    // "claudebackup-linux alpine": straight to the Alpine installer (Install Cloned System To Disk),
+    // no menu - what the live ISO's desktop shortcut runs
+    const bool alpineInstaller = hasArg(argc, argv, "alpine");
+
     if (geteuid() != 0) {
         // As the user: size the window first (a new terminal window can only be opened from here)
         USERNAME = originalUser(argc, argv);
         loadConfig();
-        fitTerminal(argc, argv, true);
+        if (!alpineInstaller) fitTerminal(argc, argv, true);
         relaunchAsRoot(argc, argv);
     }
 
     USERNAME = originalUser(argc, argv);
 
+    if (alpineInstaller) {
+        if (!onFamily("alpine")) {
+            std::cerr << COLOR_RED << "'" << APP_BIN << " alpine' is the Alpine installer; this is "
+                      << sysDistro().prettyName << " (use Calamares here)." << COLOR_RESET << std::endl;
+            return 1;
+        }
+        installClonedSystem();
+        std::cout << "\033[?25h" << std::endl;
+        return 0;
+    }
+
     mkdirP(configDirPath());
     loadConfig();
+    update::checkInBackground();   // the banner shows the result: up to date / update available
     fitTerminal(argc, argv, false);
 
     std::thread time_thread(update_time_thread);
