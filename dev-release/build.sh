@@ -147,6 +147,19 @@ install_alpine_installer_tools() {
     apk add $PKGS
 }
 
+# The claudemods branding says "claudemods Distro": name it after this distro instead (window
+# title, welcome text, and the boot entry of the installed system). $1 = branding.desc
+brand_for_distro() {
+    [ -f "$1" ] || return 0
+    PN=$(printf '%s' "$DISTRO_NAME" | tr -d '"#\\')
+    SN=$(printf '%s' "${NAME:-$DISTRO_NAME}" | tr -d '"#\\')
+    VER=$(printf '%s' "${VERSION_ID:-${VERSION:-1}}" | tr -d '"#\\')
+    sed -i -E \
+        -e "s#^([[:space:]]*(productName|versionedName|shortVersionedName)[[:space:]]*:).*#\1 $PN#" \
+        -e "s#^([[:space:]]*(shortProductName|bootloaderEntryName)[[:space:]]*:).*#\1 $SN#" \
+        -e "s#^([[:space:]]*(version|shortVersion)[[:space:]]*:).*#\1 $VER#" "$1"
+}
+
 # Unpacks the claudemods Calamares zips from resources/ into $1
 unpack_calamares_zips() {
     command -v unzip >/dev/null 2>&1 || die "unzip is not installed"
@@ -166,6 +179,7 @@ install_calamares_arch() {
     cp -r calamares /etc/
     mkdir -p /usr/share/calamares/branding
     cp -r claudemods /usr/share/calamares/branding/
+    brand_for_distro /usr/share/calamares/branding/claudemods/branding.desc
     unzip -o -q extras.zip -d /
     if [ "$2" = "1" ]; then
         say "Applying btrfs level 22 compression (compress=zstd:22)"
@@ -251,6 +265,7 @@ install_calamares_generic() {
     mkdir -p /usr/share/calamares/branding
     rm -rf /usr/share/calamares/branding/claudemods
     cp -r "$ZIPS/claudemods" /usr/share/calamares/branding/
+    brand_for_distro /usr/share/calamares/branding/claudemods/branding.desc
 
     SYSTEMD=0
     [ -d /run/systemd/system ] && SYSTEMD=1
@@ -400,9 +415,25 @@ EOF
     say "Calamares configured for $DISTRO_NAME (unpacks $UNPACK as $SOURCEFS, $FSTYPE default, $GRUB)"
 }
 
+# The Calamares shortcut asks for the password through pkexec (polkit), so it must be installed
+# on every Calamares distro, not only where it happens to be there already
+install_pkexec() {
+    command -v pkexec >/dev/null 2>&1 && return 0
+    say "Installing pkexec (polkit), used by the Calamares shortcut to ask for the password"
+    case "$FAMILY" in
+        debian)   apt-get install -y pkexec || apt-get install -y policykit-1 ;;
+        arch)     pacman -S --needed --noconfirm polkit ;;
+        fedora)   dnf install -y polkit ;;
+        opensuse) zypper --non-interactive install polkit ;;
+        gentoo)   emerge --noreplace --ask=n sys-auth/polkit ;;
+    esac || true
+    command -v pkexec >/dev/null 2>&1 || die "pkexec could not be installed - the Calamares shortcut needs it"
+}
+
 # Starts Calamares as root from the live desktop: Arch's calamares_polkit if there, otherwise
 # pkexec with the session's display (pkexec drops it, and Calamares is a GUI)
 install_calamares_launcher() {
+    install_pkexec
     cat > /usr/local/bin/claudebackup-calamares << 'EOF'
 #!/bin/sh
 # Opens Calamares as root (the "Install ..." desktop shortcut of the claudebackup live ISO).
@@ -434,8 +465,7 @@ if [ "$RC" -ne 0 ]; then
         *)   MSG="Calamares stopped with an error (exit code $RC)." ;;
     esac
     MSG="$MSG
-Details: $LOG
-(also ~/.cache/calamares/session.log of the user that ran it)"
+Details (Calamares debug output): $LOG"
     kdialog --error "$MSG" 2>/dev/null ||
         zenity --error --text="$MSG" 2>/dev/null ||
         notify-send "Install" "$MSG" 2>/dev/null ||
