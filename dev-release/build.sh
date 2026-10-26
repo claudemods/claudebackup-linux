@@ -3,13 +3,14 @@
 # with make, install the compiled binary, then launch it.
 set -euo pipefail
 
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-release"
+# build.sh lives in dev-release, next to the Makefile
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="claudebackup-linux"
 
 say() { printf '\033[1;31m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ -d "$SRC_DIR" ] || die "dev-release folder not found next to build.sh"
+[ -f "$SRC_DIR/Makefile" ] || die "Makefile not found next to build.sh (keep build.sh in dev-release)"
 [ "$(uname -s)" = "Linux" ] || die "this project only builds on Linux"
 
 # ---- privilege helper (sudo, doas, run0, pkexec or su) ----------------------
@@ -47,14 +48,14 @@ say "Installing dependencies"
 case "$FAMILY" in
     debian)
         as_root apt-get update
-        as_root apt-get install -y g++ make squashfs-tools xorriso mtools dosfstools curl tar ;;
+        as_root apt-get install -y g++ make squashfs-tools xorriso mtools dosfstools curl tar unzip python3 ;;
     arch)
         as_root pacman -S --needed --noconfirm gcc make squashfs-tools xorriso mtools dosfstools \
             tar unzip erofs-utils mkinitcpio device-mapper gnupg ;;
     fedora)
-        as_root dnf install -y gcc-c++ make squashfs-tools xorriso mtools dosfstools curl tar ;;
+        as_root dnf install -y gcc-c++ make squashfs-tools xorriso mtools dosfstools curl tar unzip python3 ;;
     opensuse)
-        as_root zypper --non-interactive install gcc-c++ make squashfs xorriso mtools dosfstools curl tar ;;
+        as_root zypper --non-interactive install gcc-c++ make squashfs xorriso mtools dosfstools curl tar unzip python3 ;;
     alpine)
         as_root apk add --no-cache build-base make squashfs-tools xorriso mtools dosfstools curl tar ;;
     gentoo)
