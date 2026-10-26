@@ -520,11 +520,34 @@ inline bool kernelHasErofsZstd() {
     return sscanf(captureCommand("uname -r").c_str(), "%d.%d", &major, &minor) == 2 && (major > 6 || (major == 6 && minor >= 10));
 }
 
-inline std::string erofsCompressionArgs() {
-    return kernelHasErofsZstd() ? "-zzstd -C 65536 --chunksize 65536" : "-zlz4hc -C 65536";
+// Whether this mkfs.erofs can write a compressor: builds differ (e.g. Ubuntu 24.04 / KDE neon's
+// erofs-utils 1.7.1 has no zstd), so test for real on a tiny folder
+inline bool mkfsErofsHasCompressor(const std::string& comp) {
+    if (!commandExists("mkfs.erofs")) return false;
+    const std::string dir = STAGING_DIR + "/erofs-test";
+    runPlain("rm -rf " + shq(dir));
+    mkdirP(dir + "/in");
+    writeFile(dir + "/in/test", "claudebackup\n");
+    bool ok = runPlain("mkfs.erofs -z" + comp + " " + shq(dir + "/test.img") + " " + shq(dir + "/in") + " >/dev/null 2>&1") == 0;
+    runPlain("rm -rf " + shq(dir));
+    return ok;
 }
 
-inline std::string erofsCompressionName() { return kernelHasErofsZstd() ? "zstd" : "lz4hc"; }
+// zstd when both the kernel (6.10+) and mkfs.erofs can do it, else lz4hc, else lz4. Decided once.
+inline std::string erofsCompressionName() {
+    static std::string name;
+    if (name.empty()) {
+        if (kernelHasErofsZstd() && mkfsErofsHasCompressor("zstd")) name = "zstd";
+        else if (mkfsErofsHasCompressor("lz4hc")) name = "lz4hc";
+        else name = "lz4";
+    }
+    return name;
+}
+
+inline std::string erofsCompressionArgs() {
+    const std::string n = erofsCompressionName();
+    return n == "zstd" ? "-zzstd -C 65536 --chunksize 65536" : "-z" + n + " -C 65536";
+}
 
 inline bool runMkerofs(const Context& c, const std::string& dest) {
     if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is not installed (run dev-release/build.sh)"); return false; }
