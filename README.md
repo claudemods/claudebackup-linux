@@ -89,7 +89,7 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, Alpine 🏔️ and Gentoo 🟣 systems
 - [x] Arch 🟦 — [x] boots from tests — [x] installation support ✅
 - [x] Debian 🔴 — [x] boots from tests — [x] installation support ✅
-- [ ] Ubuntu/KDE Neon 🟠 — [ ] boots from tests — [ ] installation support
+- [x] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [x] installation support ✅
 - [ ] Fedora 🔵 — [ ] boots from tests — [ ] installation support
 - [ ] openSUSE 🟢 — [ ] boots from tests — [ ] installation support
 - [ ] Alpine 🏔️ — [ ] boots from tests — [ ] installation support
