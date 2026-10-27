@@ -25,6 +25,85 @@ printf '\033[32m'
 # Single-quote one argument for a shell command line (for su -c)
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
+# ---- squashfs / erofs: packages, the image type question, the saved setting -
+# The image type is chosen here only; the app has no menu for it. Alpine and Gentoo only build squashfs.
+erofs_supported() {
+    case "$FAMILY" in alpine|gentoo) return 1 ;; esac
+    return 0
+}
+
+# mksquashfs (always needed: squashfs is the default image type)
+install_squashfs_tools() {
+    say "Installing squashfs-tools"
+    case "$FAMILY" in
+        debian)   apt-get install -y squashfs-tools ;;
+        arch)     pacman -S --needed --noconfirm squashfs-tools ;;
+        fedora)   dnf install -y squashfs-tools ;;
+        opensuse) zypper --non-interactive --no-refresh install --no-recommends squashfs ;;
+        alpine)   apk add squashfs-tools ;;
+        gentoo)   emerge --noreplace --ask=n sys-fs/squashfs-tools ;;
+    esac
+}
+
+# erofs images need mkfs.erofs; older releases do not package it, so it is optional
+install_erofs_utils() {
+    erofs_supported || return 0
+    command -v mkfs.erofs >/dev/null 2>&1 && return 0
+    say "Installing erofs-utils (optional: only needed for erofs images)"
+    case "$FAMILY" in
+        debian)   apt-get install -y erofs-utils ;;
+        arch)     pacman -S --needed --noconfirm erofs-utils ;;
+        fedora)   dnf install -y erofs-utils ;;
+        opensuse) zypper --non-interactive --no-refresh install --no-recommends erofs-utils ;;
+    esac || say "erofs-utils is not available here - only the squashfs image format will work"
+}
+
+# One image type for everything: the ISO the app builds and Calamares.
+# Sets IMAGE (squashfs | erofs) and EROFS (1 when erofs was chosen and the kernel can mount it)
+choose_image_format() {
+    IMAGE=squashfs
+    EROFS=0
+    if ! erofs_supported; then
+        say "$DISTRO_NAME: the image type is squashfs (erofs is not supported on this distro)"
+        return 0
+    fi
+    echo "System image type for the ISO (the app and Calamares both use it):"
+    echo "  1) Squashfs (default)"
+    echo "  2) Erofs"
+    if [ "$(choose "Enter your choice (1 or 2):")" = 2 ]; then
+        # The live ISO boots this kernel, so it must be able to mount erofs
+        if grep -qw erofs /proc/filesystems 2>/dev/null || modinfo erofs >/dev/null 2>&1; then
+            IMAGE=erofs
+            EROFS=1
+        else
+            say "This kernel has no erofs support (CONFIG_EROFS_FS), so the ISO could not boot an erofs image - using squashfs"
+        fi
+    fi
+}
+
+# The app reads its settings from ~/.config/claudebackup-linux/configuration.txt
+save_image_format() {
+    CFGDIR="$DESK_HOME/.config/claudebackup-linux"
+    CFGFILE="$CFGDIR/configuration.txt"
+    mkdir -p "$CFGDIR"
+    if [ -f "$CFGFILE" ] && grep -q '^imageFormat=' "$CFGFILE"; then
+        sed -i "s/^imageFormat=.*/imageFormat=$IMAGE/" "$CFGFILE"
+    else
+        echo "imageFormat=$IMAGE" >> "$CFGFILE"
+    fi
+    if [ -n "$DESK_USER" ]; then chown "$DESK_USER" "$CFGDIR" "$CFGFILE" 2>/dev/null || true; fi
+    say "Image type set to $IMAGE"
+}
+
+# After the packages are installed: without mkfs.erofs, use squashfs
+finalize_image_format() {
+    if [ "$IMAGE" = erofs ] && ! command -v mkfs.erofs >/dev/null 2>&1; then
+        say "mkfs.erofs is not available on $DISTRO_NAME - using squashfs"
+        IMAGE=squashfs
+    fi
+    save_image_format
+}
+
 # ---- privilege helper (sudo, doas, run0, pkexec or su) ----------------------
 as_root() {
     if [ "$(id -u)" -eq 0 ]; then "$@"
@@ -110,37 +189,24 @@ install_host_tools() {
     case "$FAMILY" in
         debian)
             apt-get update
-            apt-get install -y g++ make squashfs-tools xorriso mtools dosfstools curl tar unzip \
+            apt-get install -y g++ make xorriso mtools dosfstools curl tar unzip \
                 live-boot live-boot-initramfs-tools ;;
         arch)
-            pacman -S --needed --noconfirm gcc make squashfs-tools libisoburn mtools dosfstools tar unzip \
-                erofs-utils mkinitcpio device-mapper gnupg ;;
+            pacman -S --needed --noconfirm gcc make libisoburn mtools dosfstools tar unzip \
+                mkinitcpio device-mapper gnupg ;;
         fedora)
-            dnf install -y gcc-c++ make squashfs-tools xorriso mtools dosfstools curl tar unzip dracut-live ;;
+            dnf install -y gcc-c++ make xorriso mtools dosfstools curl tar unzip dracut-live ;;
         opensuse)
             # refresh the repositories once; the later zypper calls reuse that metadata (--no-refresh)
             zypper --non-interactive refresh || true
-            zypper --non-interactive --no-refresh install --no-recommends gcc-c++ make squashfs xorriso mtools dosfstools curl tar unzip ;;
+            zypper --non-interactive --no-refresh install --no-recommends gcc-c++ make xorriso mtools dosfstools curl tar unzip ;;
         alpine)
-            apk add build-base squashfs-tools xorriso mtools dosfstools curl tar ;;
+            apk add build-base xorriso mtools dosfstools curl tar ;;
         gentoo)
             gentoo_prepare_portage
-            emerge --noreplace --ask=n sys-fs/squashfs-tools dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools \
+            emerge --noreplace --ask=n dev-libs/libisoburn sys-fs/mtools sys-fs/dosfstools \
                 net-misc/curl app-arch/unzip sys-kernel/dracut sys-fs/lvm2 ;;
     esac
-}
-
-# erofs images need mkfs.erofs; older releases do not package it, so it is optional
-install_erofs_utils() {
-    command -v mkfs.erofs >/dev/null 2>&1 && return 0
-    say "Installing erofs-utils (optional: only needed for erofs images)"
-    case "$FAMILY" in
-        debian)   apt-get install -y erofs-utils ;;
-        fedora)   dnf install -y erofs-utils ;;
-        opensuse) zypper --non-interactive --no-refresh install --no-recommends erofs-utils ;;
-        alpine)   apk add erofs-utils ;;
-        gentoo)   emerge --noreplace --ask=n sys-fs/erofs-utils ;;
-    esac || say "erofs-utils is not available here - only the squashfs image format will work"
 }
 
 # BIOS/UEFI boot files the live ISO is made from (Arch uses the app's embedded claudemods zip
@@ -611,6 +677,7 @@ root_phase() {
     detect_family
     [ "$1" = "$FAMILY" ] || die "the distro detected as root differs ($DISTRO_NAME)"
     install_host_tools
+    install_squashfs_tools
     install_erofs_utils
     install_bootloaders
     if [ "$FAMILY" = alpine ]; then
@@ -655,22 +722,9 @@ choose() {
     [ "$reply" = 2 ] && echo 2 || echo 1
 }
 
-CALAMARES=0; BTRFS=0; EROFS=0; ALPINE_TOOLS=0
+CALAMARES=0; BTRFS=0; ALPINE_TOOLS=0
 
-# One image type for everything: the ISO the app builds (its Setup > Image Format) and Calamares
-IMAGE=squashfs
-echo "System image type for the ISO (the app and Calamares both use it):"
-echo "  1) Squashfs (default)"
-echo "  2) Erofs"
-if [ "$(choose "Enter your choice (1 or 2):")" = 2 ]; then
-    # The live ISO boots this kernel, so it must be able to mount erofs
-    if grep -qw erofs /proc/filesystems 2>/dev/null || modinfo erofs >/dev/null 2>&1; then
-        IMAGE=erofs
-        EROFS=1
-    else
-        say "This kernel has no erofs support (CONFIG_EROFS_FS), so the ISO could not boot an erofs image - using squashfs"
-    fi
-fi
+choose_image_format
 
 if [ "$FAMILY" = alpine ]; then
     say "Calamares does not run on Alpine; the live ISO has 'Install Cloned System To Disk' instead"
@@ -752,30 +806,10 @@ Categories=System;"
     as_root chmod 644 /usr/share/applications/claudebackup-install.desktop
 }
 
-# The app reads its settings from ~/.config/claudebackup-linux/configuration.txt: start its
-# Image Format on the type chosen here (it can still be changed in the app's Setup)
-save_image_format() {
-    CFGDIR="$DESK_HOME/.config/claudebackup-linux"
-    CFGFILE="$CFGDIR/configuration.txt"
-    mkdir -p "$CFGDIR"
-    if [ -f "$CFGFILE" ] && grep -q '^imageFormat=' "$CFGFILE"; then
-        sed -i "s/^imageFormat=.*/imageFormat=$IMAGE/" "$CFGFILE"
-    else
-        echo "imageFormat=$IMAGE" >> "$CFGFILE"
-    fi
-    if [ -n "$DESK_USER" ]; then chown "$DESK_USER" "$CFGDIR" "$CFGFILE" 2>/dev/null || true; fi
-    say "Image type set to $IMAGE (app: Setup > Image Format)"
-}
-
 say "Installing packages as root"
 as_root sh "$SELF" --root-phase "$FAMILY" "$CALAMARES" "$BTRFS" "$EROFS" "$ALPINE_TOOLS"
 
-# erofs-utils is optional (older releases do not package it): without mkfs.erofs, use squashfs
-if [ "$IMAGE" = erofs ] && ! command -v mkfs.erofs >/dev/null 2>&1; then
-    say "mkfs.erofs is not available on $DISTRO_NAME - using squashfs"
-    IMAGE=squashfs
-fi
-save_image_format
+finalize_image_format
 
 say "Building with make"
 make -C "$SRC_DIR" -j"$(nproc 2>/dev/null || echo 1)"
