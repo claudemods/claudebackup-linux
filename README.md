@@ -92,8 +92,6 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 - [x] Ubuntu/KDE Neon 🟠 — [x] boots from tests — [x] installation support ✅
 - [x] Fedora 🔵 — [x] boots from tests — [x] installation support ✅
 - [x] openSUSE 🟢 — [x] boots from tests — [x] installation support ✅
-- [ ] Alpine 🏔️ — [ ] boots from tests — [ ] installation support
-- [ ] Gentoo 🟣 — [ ] boots from tests — [ ] installation support
 
 ## Stage 4 🎨
 - [ ] Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
