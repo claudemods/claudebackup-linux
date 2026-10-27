@@ -587,7 +587,7 @@ inline int runWithErofsBar(const std::string& cmd, const std::string& output, co
         logError("mkfs.erofs exited with code " + std::to_string(rc) + (rc == 137 ? " (killed - out of memory)" : ""));
         // no error text in the log + a killed process = the kernel's OOM killer
         std::string oom = captureCommand("dmesg 2>/dev/null | grep -i -E 'out of memory|killed process' | tail -n 2");
-        if (!oom.empty()) logError("The kernel killed it for lack of memory: " + oom + "  -> use Setup > Image Format > squashfs, or give this machine more RAM/swap.");
+        if (!oom.empty()) logError("The kernel killed it for lack of memory: " + oom + "  -> rerun dev-release/build.sh and pick squashfs, or give this machine more RAM/swap.");
         std::cout << COLOR_OUTPUT << std::flush;
         runPlain("df -h " + shq(dirName(output)) + " /tmp 2>/dev/null");
         std::cout << COLOR_RESET << std::flush;

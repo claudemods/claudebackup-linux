@@ -102,6 +102,7 @@ void loadConfig() {
         else if (k == "imageFormat") mcfg.imageFormat = (v == "erofs") ? "erofs" : "squashfs";
         else if (k == "cleanCache") mcfg.cleanCache = (v != "0");
     }
+    if (!sysDistro().erofsSupported()) mcfg.imageFormat = "squashfs";
 }
 
 RemasterOptions currentOptions() {
@@ -355,16 +356,14 @@ std::string guideText() {
     if (alpine) step("dev-release/build.sh              tools for this distro + the Alpine installer tools (the live\n" +
                      pad + "ISO's 'Install Cloned System To Disk'), then builds and starts the app;\n" +
                      pad + "adds an 'Install' Desktop shortcut (Konsole: " + APP_BIN + " alpine)");
-    else        step("dev-release/build.sh              tools for this distro + Calamares (ext4 or btrfs zstd:22,\n" +
-                     pad + "squashfs or erofs), then builds and starts the app;\n" +
+    else        step("dev-release/build.sh              tools for this distro + Calamares (ext4 or btrfs zstd:22" +
+                     std::string(gentoo ? ")" : ",\n" + pad + "squashfs or erofs)") + ", then builds and starts the app;\n" +
                      pad + "adds an 'Install' Desktop shortcut that opens Calamares" +
                      (gentoo ? "\n" + pad + "(fetches the gentoo repo / fixes the profile if needed)" : std::string()));
     if (arch) step("Setup > mkinitcpio Config         puts 11-dm-initramfs.rules in /usr/lib/initcpio/udev if missing");
     step("Setup > ISO Name / Work / Output / Clone Directory   (blank ISO name = auto)");
     if (arch) step("Setup > ISO Tag                   volume label the live system boots from (default 2026)");
     if (!gentoo) step("Setup > zstd Compression Level    1-22, default 3 (higher = smaller, slower)");
-    step("Setup > Image Format              squashfs, or erofs (needs erofs-utils and a kernel with erofs;\n" +
-         pad + "zstd on kernel 6.10+, lz4hc on older ones)");
     step("Setup > Edit Configs              optional: your own GRUB config, boot text and initramfs config");
     step(std::string("Setup > RAM Mode                  adds a ") + (arch ? "copytoram=y" : "toram") + " boot entry");
     step("Detected System And Build Steps   check it says 'Support: yes'");
@@ -514,30 +513,6 @@ void setupIsoTag() {
     } else { mcfg.isoTag = tag; saveConfig(); }
 }
 
-void setupImageFormat() {
-    std::cout << COLOR_GREEN << "Choose the system image type (now: " << mcfg.imageFormat << "):\n"
-              << "1) Squashfs (" << (onFamily("gentoo") ? "mksquashfs gzip" : "mksquashfs zstd, Setup > zstd Compression Level") << ")\n"
-              << "2) Erofs (mkfs.erofs " << native::erofsCompressionArgs() << ")" << COLOR_RESET << std::endl;
-    std::string f = getUserInput("Enter your choice (1 or 2): ");
-    if (f == "2") {
-        // The live ISO boots this kernel, so it must be able to mount erofs
-        if (!native::kernelHasErofs()) {
-            std::cout << COLOR_RED << "This kernel has no erofs support (CONFIG_EROFS_FS), so an erofs live ISO would not boot. Keeping "
-                      << mcfg.imageFormat << "." << COLOR_RESET << std::endl;
-            pressAnyKey();
-            return;
-        }
-        if (!commandExists("mkfs.erofs"))
-            std::cout << COLOR_YELLOW << "mkfs.erofs is not installed yet - run dev-release/build.sh (or install "
-                      << remaster::erofsPackage(sysDistro()) << ")." << COLOR_RESET << std::endl;
-        mcfg.imageFormat = "erofs";
-        saveConfig();
-    } else if (f == "1") {
-        mcfg.imageFormat = "squashfs";
-        saveConfig();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Setup > Edit Configs (from the claudemods multi iso creator: Edit GRUB Config, Edit Boot Text,
 // Edit Calamares Branding, Edit Calamares initcpio.conf, mkinitcpio Config). Only what applies to
@@ -645,7 +620,6 @@ std::vector<SetupItem> setupItems() {
         int l = atoi(getUserInput("zstd level (1-22, default 3): ").c_str());
         if (l >= 1 && l <= 22) { mcfg.level = l; saveConfig(); }
     }});
-    if (sysDistro().supported()) items.push_back({"Set Image Format (squashfs / erofs)", setupImageFormat});
     items.push_back({"Toggle RAM Mode Boot Entry", [] { mcfg.ramMode = !mcfg.ramMode; saveConfig(); }});
     items.push_back({"Toggle Package Cache Cleaning (kept out of the image)", [] {
         mcfg.cleanCache = !mcfg.cleanCache;

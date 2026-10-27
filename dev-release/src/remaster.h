@@ -42,7 +42,7 @@ inline Context makeContext(const RemasterOptions& o) {
     if (!o.algo.empty()) c.settings.compressionAlgo = o.algo;
     if (o.level > 0) c.settings.compressionLevel = o.level;
     if (o.ramMode >= 0) c.settings.ramMode = (o.ramMode == 1);
-    if (o.imageFormat == "erofs") c.settings.imageFormat = "erofs";
+    if (o.imageFormat == "erofs" && c.distro.erofsSupported()) c.settings.imageFormat = "erofs";
     c.customDir = o.customDir;
     c.cleanCache = o.cleanCache;
     c.ramModeEnabled = c.settings.ramMode;
@@ -222,7 +222,7 @@ inline bool run(const RemasterOptions& opts) {
     if (c.settings.imageFormat == "erofs") {
         if (!commandExists("mkfs.erofs")) { logError("mkfs.erofs is missing (" + INSTALL_HINT + ", or install " + erofsPackage(c.distro) + ")"); return false; }
         if (!native::kernelHasErofs()) {
-            logError("The running kernel has no erofs support (CONFIG_EROFS_FS), so the live ISO could not mount the image. Set Setup > Image Format to squashfs.");
+            logError("The running kernel has no erofs support (CONFIG_EROFS_FS), so the live ISO could not mount the image. Rerun dev-release/build.sh and pick squashfs.");
             return false;
         }
         logNormal("Image: erofs (" + native::erofsCompressionName() + ")");

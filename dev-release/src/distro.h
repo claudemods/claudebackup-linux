@@ -41,6 +41,8 @@ struct Distro {
         return family;
     }
     bool supported() const { return family != "generic"; }
+    // Alpine and Gentoo only build squashfs images
+    bool erofsSupported() const { return supported() && family != "alpine" && family != "gentoo"; }
 };
 
 inline std::map<std::string, std::string> parseOsRelease() {

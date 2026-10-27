@@ -41,7 +41,7 @@ inline std::string bootParams(const Context& c) {
     if (f == "gentoo")
         return "root=live:LABEL=" + LIVE_LABEL + " rd.live.image rd.live.overlay.overlayfs=1 rd.shell";
     if (f == "alpine")
-        return std::string("modules=loop,squashfs,") + (c.settings.imageFormat == "erofs" ? "erofs," : "") + "sd-mod,usb-storage alpinelivelabel=" + LIVE_LABEL + " alpinelivesquashfs=filesystem.squashfs cow_spacesize=2G quiet";
+        return "modules=loop,squashfs,sd-mod,usb-storage alpinelivelabel=" + LIVE_LABEL + " alpinelivesquashfs=filesystem.squashfs cow_spacesize=2G quiet";
     return "";
 }
 
@@ -257,7 +257,7 @@ rm -f /tmp/cbl-dracut.conf
 
 // Gentoo: dracut dmsquash-live, like Fedora. Kernels are often hand-configured, so first check
 // that the ones the live boot needs exist (as a module or built in) and say which option is missing.
-inline std::string initramfsGentoo(const Context& c) {
+inline std::string initramfsGentoo(const Context&) {
     std::string s = std::string("#!/bin/bash\nset -e\n# gentoo: initramfs\n") + DRACUT_CUSTOM_CONF + R"CBL(
 KERNEL_VERSION=$(uname -r)
 if [ ! -d "/lib/modules/$KERNEL_VERSION" ]; then
@@ -290,14 +290,13 @@ has_mod squashfs || MISSING="$MISSING CONFIG_SQUASHFS"
 has_mod overlay  || MISSING="$MISSING CONFIG_OVERLAY_FS"
 has_mod isofs    || MISSING="$MISSING CONFIG_ISO9660_FS"
 has_mod loop     || MISSING="$MISSING CONFIG_BLK_DEV_LOOP"
-@@EROFS_CHECK@@
 if [ -n "$MISSING" ]; then
     echo "[FATAL ERROR] kernel $KERNEL_VERSION cannot boot a live ISO, enable (=m or =y):$MISSING"
     echo "              then rebuild and install the kernel and run the build again."
     exit 1
 fi
 
-DRIVERS="iso9660 squashfs loop overlay@@EROFS@@"
+DRIVERS="iso9660 squashfs loop overlay"
 has_mod sr_mod && DRIVERS="sr_mod $DRIVERS"
 # multipath is not needed to boot a live ISO and fails on systems with multipath-tools installed
 if ! dracut -f --no-hostonly $DRACUT_CONF --add "dmsquash-live" --omit "multipath" --add-drivers "$DRIVERS" --kver "$KERNEL_VERSION" /boot/cbl-initrd.img; then
@@ -311,13 +310,12 @@ if [ ! -f /boot/cbl-initrd.img ]; then
     exit 1
 fi
 )CBL";
-    s = replaceAll(s, "@@EROFS@@", erofsDriver(c));
-    return replaceAll(s, "@@EROFS_CHECK@@", isErofs(c) ? "has_mod erofs || MISSING=\"$MISSING CONFIG_EROFS_FS\"" : "");
+    return s;
 }
 
 // Alpine: patches the stock initramfs-init with a "sidecar" that mounts the live medium
 // when Alpine's own boot fails, then rebuilds with mkinitfs. (oa-alpine-mkinitfs-custom)
-inline std::string initramfsAlpine(const Context& c) {
+inline std::string initramfsAlpine(const Context&) {
     std::string s = R"CBL(#!/bin/bash
 set -e
 INIT_FILE="/usr/share/mkinitfs/initramfs-init"
@@ -331,7 +329,7 @@ echo "-> 1. Generating the CBL-SIDECAR rescue (standard /run/live/medium)..."
 cat << 'EOF' > "$PATCH_FILE"
     echo ">>> [CBL-SIDECAR] Alpine boot failed. Starting claudemods rescue... <<<" > /dev/console
 
-    modprobe isofs squashfs erofs loop overlay 2>/dev/null
+    modprobe isofs squashfs loop overlay 2>/dev/null
 
     CMDLINE=$(cat /proc/cmdline)
     LABEL=$(echo "$CMDLINE" | tr ' ' '\n' | grep -o 'alpinelivelabel=[^ ]*' | cut -d= -f2)
@@ -351,7 +349,7 @@ cat << 'EOF' > "$PATCH_FILE"
         mount -t tmpfs tmpfs /live_data
         mkdir -p /live_data/medium /live_data/rootfs/filesystem.squashfs /live_data/overlay /sysroot
         mount -o ro "$ISO_DEV" /live_data/medium
-        if mount -t @@IMAGE_FS@@ -o ro "/live_data/medium/live/filesystem.squashfs" /live_data/rootfs/filesystem.squashfs; then
+        if mount -t squashfs -o ro "/live_data/medium/live/filesystem.squashfs" /live_data/rootfs/filesystem.squashfs; then
             mkdir -p /live_data/overlay/rw /live_data/overlay/work
             mount -t overlay overlay -o lowerdir=/live_data/rootfs/filesystem.squashfs,upperdir=/live_data/overlay/rw,workdir=/live_data/overlay/work /sysroot
             mkdir -p /sysroot/sys /sysroot/proc /sysroot/dev /sysroot/run
@@ -388,7 +386,6 @@ kernel/fs/squashfs
 kernel/fs/overlayfs
 kernel/fs/loop
 kernel/lib/libcrc32c*
-@@EROFS_MODULE@@
 MODULES
 
 echo 'features="ata base ide scsi cdrom usb virtio ext4 squashfs cbllive"' > /etc/mkinitfs/live.conf
@@ -399,8 +396,6 @@ mkinitfs -i "$CUSTOM_INIT" -c /etc/mkinitfs/live.conf -o /boot/initramfs-cbl "$K
 rm -f "$CUSTOM_INIT"
 echo "-> alpine initramfs completed."
 )CBL";
-    s = replaceAll(s, "@@IMAGE_FS@@", isErofs(c) ? "erofs" : "squashfs");
-    s = replaceAll(s, "@@EROFS_MODULE@@", isErofs(c) ? "kernel/fs/erofs" : "");
     return replaceAll(s, "@@LIVE_LABEL@@", LIVE_LABEL);
 }
 
