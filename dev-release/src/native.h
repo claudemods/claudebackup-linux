@@ -265,6 +265,55 @@ inline std::vector<CacheDir> packageCaches(const Distro& d) {
     return v;
 }
 
+// Fedora live sessions run as "liveuser". A clone made there would boot into that account, so the
+// image leaves it out when another normal account exists (the running system is not touched: see
+// stripLiveUser, which only changes what the image sees).
+inline bool liveUserStripWanted(const Distro& d) {
+    if (d.family != "fedora") return false;
+    bool live = false, other = false;
+    for (const auto& l : splitLines(readFile("/etc/passwd"))) {
+        std::vector<std::string> f;
+        std::stringstream ss(l);
+        std::string part;
+        while (std::getline(ss, part, ':')) f.push_back(part);
+        if (f.size() < 7) continue;
+        if (f[0] == "liveuser") { live = true; continue; }
+        int uid = atoi(f[2].c_str());
+        if (uid >= 1000 && uid < 60000 && !endsWith(f[6], "nologin") && !endsWith(f[6], "false")) other = true;
+    }
+    return live && other;
+}
+
+// Hides liveuser from the image: the account files (and display-manager configs that name it) are
+// bind-mounted over their copies inside the clone with liveuser filtered out, so mksquashfs /
+// mkfs.erofs read the filtered versions while the real system keeps its files. They are unmounted
+// with the rest of the clone (unbindRoot).
+inline void stripLiveUser(const Context& c, const std::string& clone) {
+    if (!liveUserStripWanted(c.distro)) return;
+    logNormal("Leaving the liveuser account out of the image (your running system keeps it)");
+    const std::string dir = STAGING_DIR + "/liveuser-strip";
+    mkdirP(dir);
+    int n = 0;
+    auto filtered = [&](const std::string& rel, const std::string& sedExpr) {
+        const std::string real = "/" + rel;
+        if (!isRegularFile(real) || !contains(readFile(real), "liveuser")) return;
+        const std::string tmp = dir + "/" + std::to_string(n++);
+        if (runPlain("cp -p " + shq(real) + " " + shq(tmp) + " && sed -i -E " + shq(sedExpr) + " " + shq(tmp)) != 0) return;
+        if (runPlain("mount --bind " + shq(tmp) + " " + shq(clone + "/" + rel)) != 0)
+            logWarning("could not hide liveuser in " + rel);
+    };
+    filtered("etc/passwd",  "/^liveuser:/d");
+    filtered("etc/shadow",  "/^liveuser:/d");
+    const std::string grp = "/^liveuser:/d; s/(:|,)liveuser(,|$)/\\1\\2/g; s/,,/,/g; s/:,/:/; s/,$//";
+    filtered("etc/group",   grp);
+    filtered("etc/gshadow", grp);
+    filtered("etc/sddm.conf", "/^(AutomaticLogin|autologin-user|User)=liveuser/d");
+    filtered("etc/gdm/custom.conf", "/^(AutomaticLogin|autologin-user|User)=liveuser/d");
+    filtered("etc/lightdm/lightdm.conf", "/^(AutomaticLogin|autologin-user|User)=liveuser/d");
+    for (const auto& l : splitLines(captureCommand("ls /etc/sddm.conf.d/*.conf 2>/dev/null")))
+        if (!l.empty()) filtered(l.substr(1), "/^(AutomaticLogin|autologin-user|User)=liveuser/d");
+}
+
 // Says what is being left out of the image, with the size it saves (the step before mksquashfs / mkfs.erofs)
 inline bool reportPackageCaches(const Context& c) {
     logNormal("Cleaning the package cache and temp files out of the image (your running system's own files are not touched):");
@@ -324,6 +373,10 @@ inline std::string generateExcludeList(const Context& c) {
             "etc/skel/Desktop/liveinst.desktop", "etc/skel/Desktop/anaconda.desktop",
             "etc/skel/Desktop/org.fedoraproject.AnacondaInstaller.desktop"
         }) ex.push_back(e);
+    }
+
+    if (liveUserStripWanted(c.distro)) {
+        for (const char* e : {"home/liveuser", "var/spool/mail/liveuser", "etc/sudoers.d/liveuser"}) ex.push_back(e);
     }
 
     if (c.cleanCache) {
@@ -529,7 +582,16 @@ inline int runWithErofsBar(const std::string& cmd, const std::string& output, co
     int secs = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count());
     drawErofsBar(rc == 0 ? 100 : std::min(60, std::max(1, secs / 10)), 0, secs, humanSize(output));
     std::cout << "\033[?25h" << std::endl;
-    if (rc != 0) runCommand("tail -n 20 " + shq(logFile));
+    if (rc != 0) {
+        runCommand("tail -n 20 " + shq(logFile));
+        logError("mkfs.erofs exited with code " + std::to_string(rc) + (rc == 137 ? " (killed - out of memory)" : ""));
+        // no error text in the log + a killed process = the kernel's OOM killer
+        std::string oom = captureCommand("dmesg 2>/dev/null | grep -i -E 'out of memory|killed process' | tail -n 2");
+        if (!oom.empty()) logError("The kernel killed it for lack of memory: " + oom + "  -> use Setup > Image Format > squashfs, or give this machine more RAM/swap.");
+        std::cout << COLOR_OUTPUT << std::flush;
+        runPlain("df -h " + shq(dirName(output)) + " /tmp 2>/dev/null");
+        std::cout << COLOR_RESET << std::flush;
+    }
     return rc;
 }
 
@@ -583,8 +645,18 @@ inline bool runMkerofs(const Context& c, const std::string& dest) {
     unlink(dest.c_str());
     const std::string src = cloneDir(c);
     if (!bindRoot(src, {c.workDir})) return false;
+    stripLiveUser(c, src);
 
-    std::string cmd = "mkfs.erofs " + erofsCompressionArgs() + " -T" + std::to_string((long long)time(nullptr)) +
+    // Every worker thread holds a compression buffer: fewer of them keeps small-RAM machines (and VMs)
+    // from being OOM-killed half way. Older mkfs.erofs has no --workers option, so check for it.
+    std::string workers;
+    if (!captureCommand("mkfs.erofs --help 2>&1 | grep -c -e '--workers'").empty() &&
+        captureCommand("mkfs.erofs --help 2>&1 | grep -c -e '--workers'") != "0") {
+        unsigned n = std::thread::hardware_concurrency();
+        workers = " --workers=" + std::to_string(std::max(1u, std::min(4u, n / 2)));
+    }
+
+    std::string cmd = "mkfs.erofs " + erofsCompressionArgs() + workers + " -T" + std::to_string((long long)time(nullptr)) +
         " --ignore-mtime" + erofsExcludeArgs(c) + " " + shq(dest) + " " + shq(src);
 
     logNormal("Running: " + cmd);
@@ -624,6 +696,7 @@ inline bool runMksquashfs(const Context& c, const std::string& dest) {
     mkdirP(dirName(dest));
     const std::string src = cloneDir(c);
     if (!bindRoot(src, {c.workDir})) return false;
+    stripLiveUser(c, src);
 
     std::string cmd;
     if (c.distro.family == "archlinux") {
