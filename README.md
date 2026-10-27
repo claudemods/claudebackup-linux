@@ -93,5 +93,8 @@ Fully support Arch 🟦, Debian 🔴, Ubuntu 🟠, Fedora 🔵, openSUSE 🟢, A
 - [x] Fedora 🔵 — [x] boots from tests — [x] installation support ✅
 - [x] openSUSE 🟢 — [x] boots from tests — [x] installation support ✅
 
-## Stage 4 🎨
+## stage 4 custom installer like calamares and custom .img 
+- both built and being tested i will update soon
+
+## Stage 5 🎨
 - [ ] Once script fully works as intended 💯, upgrade **claudebackup-linux-qt6** 🖥️ — the GUI version of what will be this finished script ✨
