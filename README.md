@@ -48,6 +48,8 @@
 
 ![C++](https://img.shields.io/badge/C++-17-blue) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
+> project merged into claude codex; newer updates will be in the new project
+
 </div>
 
 ## 🐧 Supported Distributions
